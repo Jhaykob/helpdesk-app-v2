@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Ticket;
 use App\Models\TicketActivity;
 use App\Models\AuditLog; // <-- ADDED GLOBAL AUDIT LOG IMPORT
+use App\Models\Macro;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Gate;
@@ -116,7 +117,10 @@ class TicketController extends Controller
         }
 
         $ticket->load(['comments.user', 'user', 'assignedTo', 'activities.user']);
-        return view('tickets.show', compact('ticket'));
+
+        // Fetch macros so the view can use them
+        $macros = Macro::all();
+        return view('tickets.show', compact('ticket', 'macros'));
     }
 
     public function update(Request $request, Ticket $ticket)

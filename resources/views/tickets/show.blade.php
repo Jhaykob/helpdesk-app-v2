@@ -112,11 +112,25 @@
                         </div>
 
                         <div class="border-t border-gray-100 pt-6">
-                            <form method="POST" action="{{ route('comments.store', $ticket) }}">
+                            <form method="POST" action="{{ route('comments.store', $ticket) }}" x-data="{ selectedMacro: '' }">
                                 @csrf
+
+                                @if(Auth::user()->role->name === 'admin' || Auth::user()->role->name === 'agent')
+                                    <div class="mb-3">
+                                        <select x-model="selectedMacro"
+                                                @change="if(selectedMacro !== '') { document.getElementById('content').value = selectedMacro; selectedMacro = ''; }"
+                                                class="block w-full text-sm text-gray-500 bg-gray-50 border-gray-300 rounded-md shadow-sm focus:border-red-500 focus:ring-red-500">
+                                            <option value="">-- Insert a Canned Response (Macro) --</option>
+                                            @foreach($macros as $macro)
+                                                <option value="{{ $macro->content }}">{{ $macro->title }}</option>
+                                            @endforeach
+                                        </select>
+                                    </div>
+                                @endif
+
                                 <div class="mb-3">
                                     <label for="content" class="sr-only">Your Reply</label>
-                                    <textarea name="content" id="content" rows="3" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-red-500 focus:ring-red-500 sm:text-sm" placeholder="Type your reply here..." required></textarea>
+                                    <textarea name="content" id="content" rows="4" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-red-500 focus:ring-red-500 sm:text-sm" placeholder="Type your reply here..." required></textarea>
                                 </div>
 
                                 <div class="flex items-center justify-between">
