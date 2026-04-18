@@ -5,11 +5,12 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
-use Illuminate\Database\Eloquent\SoftDeletes; // <-- 1. ADD THIS IMPORT
+use Illuminate\Database\Eloquent\SoftDeletes;
+use Carbon\Carbon; // <-- ADDED FOR DATE MATH
 
 class Ticket extends Model
 {
-    use SoftDeletes; // <-- 2. ADD THE TRAIT HERE
+    use SoftDeletes;
 
     protected $fillable = [
         'title',
@@ -43,5 +44,30 @@ class Ticket extends Model
     public function activities(): HasMany
     {
         return $this->hasMany(TicketActivity::class)->latest();
+    }
+
+    // NEW: Calculate the exact SLA deadline timestamp
+    public function getSlaDeadlineAttribute()
+    {
+        $hours = match ($this->priority) {
+            'High' => 24,
+            'Medium' => 48,
+            'Low' => 72,
+            default => 72,
+        };
+
+        return $this->created_at->addHours($hours);
+    }
+
+    // NEW: Check if the ticket is currently breaching its SLA
+    public function getIsBreachingSlaAttribute()
+    {
+        // If it's resolved or closed, it's no longer breaching
+        if (in_array($this->status, ['Resolved', 'Closed'])) {
+            return false;
+        }
+
+        // Return true if the current time is past the deadline
+        return now()->greaterThan($this->slaDeadline);
     }
 }
