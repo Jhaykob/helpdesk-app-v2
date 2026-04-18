@@ -11,17 +11,27 @@ use Illuminate\Support\Facades\Hash; // <-- ADDED FOR SECURE PASSWORDS
 
 class UserController extends Controller
 {
-    public function index()
+    public function index(Request $request) // <-- Add Request $request here
     {
         if (Auth::user()->role->name !== 'admin') {
             abort(403, 'Unauthorized action.');
         }
 
-        // Added latest() to show newest users first
-        $users = User::with('role')->latest()->get();
+        $search = $request->input('search');
+
+        // Fetch users with search filtering and pagination
+        $users = User::with('role')
+            ->when($search, function ($query, $search) {
+                $query->where('name', 'like', "%{$search}%")
+                    ->orWhere('email', 'like', "%{$search}%");
+            })
+            ->latest()
+            ->paginate(10) // <-- 10 users per page
+            ->withQueryString(); // <-- Keeps the search term active across pages
+
         $roles = Role::all();
 
-        return view('users.index', compact('users', 'roles'));
+        return view('users.index', compact('users', 'roles', 'search'));
     }
 
     // NEW: Create User Method

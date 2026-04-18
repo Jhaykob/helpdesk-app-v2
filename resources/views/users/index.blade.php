@@ -30,6 +30,21 @@
                 </div>
             @endif
 
+            <div class="mb-6 bg-white p-4 rounded-lg shadow-sm border border-gray-200 flex justify-between items-center">
+                <form method="GET" action="{{ route('users.index') }}" class="w-full max-w-md relative flex items-center">
+                    <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                        <svg class="h-5 w-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                    </div>
+                    <input type="text" name="search" value="{{ request('search') }}" placeholder="Search users by name or email..." class="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-l-md leading-5 bg-white placeholder-gray-500 focus:outline-none focus:ring-red-500 focus:border-red-500 sm:text-sm transition duration-150 ease-in-out">
+                    <button type="submit" class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-r-md text-sm font-medium border border-transparent transition">
+                        Search
+                    </button>
+                    @if(request('search'))
+                        <a href="{{ route('users.index') }}" class="ml-3 text-sm text-red-600 hover:text-red-800 hover:underline">Clear</a>
+                    @endif
+                </form>
+            </div>
+
             <div class="bg-white overflow-hidden shadow-sm sm:rounded-lg border-t-4 border-red-600">
                 <div class="p-6 text-gray-900 overflow-x-auto">
                     <table class="min-w-full divide-y divide-gray-200">
@@ -44,9 +59,8 @@
                             </tr>
                         </thead>
                         <tbody class="bg-white divide-y divide-gray-200">
-                            @foreach ($users as $user)
+                            @forelse ($users as $user)
                                 <tr class="hover:bg-gray-50 transition-colors duration-200">
-
                                     <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 flex items-center gap-3">
                                         <div class="w-8 h-8 rounded-full flex items-center justify-center font-bold text-white text-xs {{ $user->role->name === 'admin' ? 'bg-red-600' : ($user->role->name === 'agent' ? 'bg-blue-600' : 'bg-gray-500') }} {{ !$user->is_active ? 'opacity-50' : '' }}">
                                             {{ substr($user->name, 0, 1) }}
@@ -101,9 +115,18 @@
                                         </form>
                                     </td>
                                 </tr>
-                            @endforeach
+                            @empty
+                                <tr>
+                                    <td colspan="6" class="px-6 py-4 text-center text-sm text-gray-500">No users found matching your search.</td>
+                                </tr>
+                            @endforelse
                         </tbody>
                     </table>
+
+                    <div class="mt-4">
+                        {{ $users->links() }}
+                    </div>
+
                 </div>
             </div>
         </div>
