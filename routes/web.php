@@ -32,6 +32,7 @@ Route::middleware('auth')->group(function () {
     Route::post('/tickets/{ticket}/comments', [CommentController::class, 'store'])->name('comments.store');
 
     // <-- ADD THESE USER MANAGEMENT ROUTES -->
+    Route::post('/users', [UserController::class, 'store'])->name('users.store');
     Route::get('/users', [UserController::class, 'index'])->name('users.index');
     Route::patch('/users/{user}/role', [UserController::class, 'updateRole'])->name('users.updateRole');
 
