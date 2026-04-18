@@ -142,6 +142,65 @@
                     </div>
                 </div>
 
+                <div class="bg-white shadow-sm sm:rounded-lg border border-gray-200 overflow-hidden mt-6">
+                    <div class="px-6 py-4 border-b border-gray-200 bg-gray-50 flex items-center">
+                        <svg class="w-5 h-5 text-gray-500 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                        <h4 class="text-lg font-semibold text-gray-800">Activity History</h4>
+                    </div>
+
+                    <div class="p-6">
+                        <div class="flow-root">
+                            <ul role="list" class="-mb-8">
+                                @foreach($ticket->activities as $activity)
+                                    <li>
+                                        <div class="relative pb-8">
+                                            @if(!$loop->last)
+                                                <span class="absolute top-4 left-4 -ml-px h-full w-0.5 bg-gray-200" aria-hidden="true"></span>
+                                            @endif
+
+                                            <div class="relative flex space-x-3">
+                                                <div>
+                                                    <span class="h-8 w-8 rounded-full flex items-center justify-center ring-8 ring-white
+                                                        {{ $activity->action === 'created the ticket' ? 'bg-green-500' : '' }}
+                                                        {{ $activity->action === 'claimed the ticket' ? 'bg-blue-500' : '' }}
+                                                        {{ $activity->action === 'changed status' ? 'bg-gray-500' : '' }}">
+
+                                                        @if($activity->action === 'created the ticket')
+                                                            <svg class="h-4 w-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+                                                        @elseif($activity->action === 'claimed the ticket')
+                                                            <svg class="h-4 w-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
+                                                        @else
+                                                            <svg class="h-4 w-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                                                        @endif
+                                                    </span>
+                                                </div>
+                                                <div class="min-w-0 flex-1 pt-1.5 flex justify-between space-x-4">
+                                                    <div>
+                                                        <p class="text-sm text-gray-500">
+                                                            <span class="font-medium text-gray-900">{{ $activity->user ? $activity->user->name : 'System' }}</span>
+                                                            {{ $activity->action }}
+
+                                                            @if($activity->old_value && $activity->new_value)
+                                                                from <span class="font-semibold text-gray-700">{{ $activity->old_value }}</span>
+                                                                to <span class="font-semibold text-gray-900">{{ $activity->new_value }}</span>
+                                                            @elseif($activity->new_value)
+                                                                to <span class="font-semibold text-gray-900">{{ $activity->new_value }}</span>
+                                                            @endif
+                                                        </p>
+                                                    </div>
+                                                    <div class="text-right text-xs whitespace-nowrap text-gray-500">
+                                                        <time datetime="{{ $activity->created_at }}">{{ $activity->created_at->format('M d, g:i A') }}</time>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </li>
+                                @endforeach
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
             </div>
 
             <div class="w-full md:w-1/3 space-y-6">

@@ -3,9 +3,11 @@
 namespace App\Http\Controllers;
 
 use App\Models\Ticket;
+use App\Models\TicketActivity;
+use App\Models\AuditLog; // <-- ADDED GLOBAL AUDIT LOG IMPORT
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Gate; // <-- ADDED THIS IMPORT
+use Illuminate\Support\Facades\Gate;
 
 class TicketController extends Controller
 {
@@ -45,6 +47,22 @@ class TicketController extends Controller
             'user_id' => Auth::id(),
         ]);
 
+        // LOCAL LOGGING: Ticket History
+        TicketActivity::create([
+            'ticket_id' => $ticket->id,
+            'user_id' => Auth::id(),
+            'action' => 'created the ticket',
+        ]);
+
+        // GLOBAL LOGGING: Enterprise Audit Trail
+        AuditLog::create([
+            'user_id' => Auth::id(),
+            'action' => 'Created Ticket',
+            'target_type' => 'Ticket',
+            'target_id' => $ticket->id,
+            'new_value' => 'Status: Unassigned',
+        ]);
+
         if ($request->hasFile('attachment')) {
             $file = $request->file('attachment');
             $fileName = time() . '_' . $file->getClientOriginalName();
@@ -61,7 +79,6 @@ class TicketController extends Controller
 
     public function claim(Ticket $ticket)
     {
-        // FIX: Using Gate makes the IDE happy!
         if (Gate::denies('claim', $ticket)) {
             abort(403, 'Unauthorized action.');
         }
@@ -69,6 +86,24 @@ class TicketController extends Controller
         $ticket->update([
             'assigned_to' => Auth::id(),
             'status' => 'Open',
+        ]);
+
+        // LOCAL LOGGING: Ticket History
+        TicketActivity::create([
+            'ticket_id' => $ticket->id,
+            'user_id' => Auth::id(),
+            'action' => 'claimed the ticket',
+            'new_value' => 'Open',
+        ]);
+
+        // GLOBAL LOGGING: Enterprise Audit Trail
+        AuditLog::create([
+            'user_id' => Auth::id(),
+            'action' => 'Claimed Ticket',
+            'target_type' => 'Ticket',
+            'target_id' => $ticket->id,
+            'old_value' => 'Unassigned',
+            'new_value' => 'Open',
         ]);
 
         return redirect()->route('tickets.show', $ticket)->with('success', 'You have successfully claimed this ticket.');
@@ -80,7 +115,7 @@ class TicketController extends Controller
             abort(403, 'Unauthorized action.');
         }
 
-        $ticket->load(['comments.user', 'user', 'assignedTo']);
+        $ticket->load(['comments.user', 'user', 'assignedTo', 'activities.user']);
         return view('tickets.show', compact('ticket'));
     }
 
@@ -94,7 +129,29 @@ class TicketController extends Controller
             'status' => 'required|in:Open,Pending Customer,Pending Technician,Resolved,Closed',
         ]);
 
+        $oldStatus = $ticket->status;
         $ticket->update($validated);
+
+        if ($oldStatus !== $validated['status']) {
+            // LOCAL LOGGING: Ticket History
+            TicketActivity::create([
+                'ticket_id' => $ticket->id,
+                'user_id' => Auth::id(),
+                'action' => 'changed status',
+                'old_value' => $oldStatus,
+                'new_value' => $validated['status'],
+            ]);
+
+            // GLOBAL LOGGING: Enterprise Audit Trail
+            AuditLog::create([
+                'user_id' => Auth::id(),
+                'action' => 'Changed Ticket Status',
+                'target_type' => 'Ticket',
+                'target_id' => $ticket->id,
+                'old_value' => $oldStatus,
+                'new_value' => $validated['status'],
+            ]);
+        }
 
         return redirect()->route('tickets.show', $ticket)->with('success', 'Ticket status updated successfully.');
     }
@@ -105,7 +162,18 @@ class TicketController extends Controller
             abort(403, 'Unauthorized action.');
         }
 
+        $ticketId = $ticket->id; // Grab ID before soft-deleting
         $ticket->delete();
+
+        // GLOBAL LOGGING: Enterprise Audit Trail
+        AuditLog::create([
+            'user_id' => Auth::id(),
+            'action' => 'Deleted Ticket',
+            'target_type' => 'Ticket',
+            'target_id' => $ticketId,
+            'new_value' => 'Soft Deleted',
+        ]);
+
         return redirect()->route('tickets.index')->with('success', 'Ticket deleted successfully.');
     }
 }

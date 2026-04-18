@@ -4,9 +4,10 @@ namespace App\Http\Controllers;
 
 use App\Models\Ticket;
 use App\Models\Comment;
+use App\Models\AuditLog; // <-- ADDED
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
-use App\Notifications\TicketUpdatedNotification; // <-- ADDED IMPORT
+use App\Notifications\TicketUpdatedNotification;
 
 class CommentController extends Controller
 {
@@ -29,17 +30,21 @@ class CommentController extends Controller
             'is_internal' => $isInternal,
         ]);
 
-        // The Ping-Pong Auto-Status & Notification Logic
+        // WRITE TO GLOBAL AUDIT LOG
+        AuditLog::create([
+            'user_id' => Auth::id(),
+            'action' => 'Added Comment',
+            'target_type' => 'Ticket',
+            'target_id' => $ticket->id,
+            'new_value' => $isInternal ? 'Internal Note' : 'Public Reply',
+        ]);
+
         if (!$isInternal) {
             if (Auth::user()->role->name === 'admin' || Auth::user()->role->name === 'agent') {
                 $ticket->update(['status' => 'Pending Customer']);
-
-                // NOTIFY THE CUSTOMER
                 $ticket->user->notify(new TicketUpdatedNotification($ticket, Auth::user()->name . ' replied to your ticket.'));
             } elseif (Auth::id() === $ticket->user_id) {
                 $ticket->update(['status' => 'Pending Technician']);
-
-                // NOTIFY THE ASSIGNED TECHNICIAN (if one exists)
                 if ($ticket->assignedTo) {
                     $ticket->assignedTo->notify(new TicketUpdatedNotification($ticket, 'The customer replied to ticket #' . $ticket->id));
                 }

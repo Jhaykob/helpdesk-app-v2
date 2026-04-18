@@ -5,6 +5,7 @@ use App\Http\Controllers\TicketController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\CommentController;
 use App\Http\Controllers\UserController;
+use App\Http\Controllers\AuditLogController;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Auth;
 
@@ -38,6 +39,9 @@ Route::middleware('auth')->group(function () {
         Auth::user()->unreadNotifications->markAsRead();
         return back();
     })->name('notifications.read');
+
+    // <-- NEW: Global Audit Logs Route -->
+    Route::get('/audit-logs', [AuditLogController::class, 'index'])->name('audit-logs.index');
 });
 
 require __DIR__ . '/auth.php';
