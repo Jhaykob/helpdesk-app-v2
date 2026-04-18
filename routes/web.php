@@ -50,6 +50,10 @@ Route::middleware(['auth', CheckActiveUser::class])->group(function () {
 
     // Knowledge Base API
     Route::get('/kb/search', [KnowledgeBaseController::class, 'search'])->name('kb.search');
+
+    // System Settings
+    Route::get('/settings', [\App\Http\Controllers\SettingsController::class, 'index'])->name('settings.index');
+    Route::post('/settings', [\App\Http\Controllers\SettingsController::class, 'update'])->name('settings.update');
 });
 
 require __DIR__ . '/auth.php';
