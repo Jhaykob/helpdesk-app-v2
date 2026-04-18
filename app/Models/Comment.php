@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 class Comment extends Model
 {
     // Added 'is_internal' to the fillable array
-    protected $fillable = ['content', 'ticket_id', 'user_id', 'is_internal'];
+    protected $fillable = ['content', 'ticket_id', 'user_id', 'is_internal', 'attachment_path'];
 
     protected $casts = [
         'is_internal' => 'boolean', // Ensures Laravel treats it as true/false

@@ -18,7 +18,10 @@ class Ticket extends Model
         'status',
         'priority',
         'user_id',
-        'assigned_to'
+        'assigned_to',
+        'sla_deadline',
+        'rating',
+        'csat_feedback',
     ];
 
     public function user(): BelongsTo

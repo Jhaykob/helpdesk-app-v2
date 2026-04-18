@@ -12,21 +12,46 @@ use Illuminate\Support\Facades\Gate;
 
 class TicketController extends Controller
 {
-    public function index()
+    public function index(Request $request) // <-- Add Request $request
     {
         $user = Auth::user();
+        $search = $request->input('search');
+        $statusFilter = $request->input('status');
+        $priorityFilter = $request->input('priority');
 
+        // 1. Base Query with Eager Loading
+        $query = Ticket::with(['user', 'assignedTo']);
+
+        // 2. Enforce Role-Based Access Control (RBAC)
         if ($user->role->name === 'admin') {
-            $tickets = Ticket::with(['user', 'assignedTo'])->latest()->get();
+            // Admins see everything
         } elseif ($user->role->name === 'agent') {
-            $tickets = Ticket::where('status', 'Unassigned')
-                ->orWhere('assigned_to', $user->id)
-                ->with(['user', 'assignedTo'])
-                ->latest()
-                ->get();
+            $query->where(function ($q) use ($user) {
+                $q->where('status', 'Unassigned')
+                    ->orWhere('assigned_to', $user->id);
+            });
         } else {
-            $tickets = Ticket::where('user_id', $user->id)->with(['assignedTo'])->latest()->get();
+            // Regular users only see their own
+            $query->where('user_id', $user->id);
         }
+
+        // 3. Apply Search and Filters
+        $tickets = $query
+            ->when($search, function ($q, $search) {
+                $q->where(function ($subQ) use ($search) {
+                    $subQ->where('title', 'like', "%{$search}%")
+                        ->orWhere('id', 'like', "%{$search}%");
+                });
+            })
+            ->when($statusFilter, function ($q, $statusFilter) {
+                $q->where('status', $statusFilter);
+            })
+            ->when($priorityFilter, function ($q, $priorityFilter) {
+                $q->where('priority', $priorityFilter);
+            })
+            ->latest()
+            ->paginate(10) // 4. Paginate!
+            ->withQueryString();
 
         return view('tickets.index', compact('tickets'));
     }
@@ -116,48 +141,115 @@ class TicketController extends Controller
             abort(403, 'Unauthorized action.');
         }
 
+        // Maintained your original eager loading
         $ticket->load(['comments.user', 'user', 'assignedTo', 'activities.user']);
 
-        // Fetch macros so the view can use them
-        $macros = Macro::all();
-        return view('tickets.show', compact('ticket', 'macros'));
+        // Maintained your Macros fetch
+        $macros = \App\Models\Macro::all();
+
+        // NEW: Fetch agents for the "Assign To" dropdown in the sidebar
+        $agents = [];
+        if (Auth::user()->role->name === 'admin' || Auth::user()->role->name === 'agent') {
+            $agents = \App\Models\User::whereHas('role', function ($q) {
+                $q->whereIn('name', ['admin', 'agent']);
+            })->get();
+        }
+
+        // NEW: Fetch the timeline activities explicitly (ordered by latest)
+        // We use the Global AuditLog model we built earlier.
+        $activities = \App\Models\AuditLog::with('user')
+            ->where('target_type', 'Ticket')
+            ->where('target_id', $ticket->id)
+            ->latest()
+            ->get();
+
+        // Pass everything the updated view requires
+        return view('tickets.show', compact('ticket', 'macros', 'agents', 'activities'));
     }
 
     public function update(Request $request, Ticket $ticket)
     {
-        if (Gate::denies('update', $ticket)) {
+        // 1. Security Check
+        if (!in_array(Auth::user()->role->name, ['admin', 'agent'])) {
             abort(403, 'Unauthorized action.');
         }
 
-        $validated = $request->validate([
-            'status' => 'required|in:Open,Pending Customer,Pending Technician,Resolved,Closed',
-        ]);
-
-        $oldStatus = $ticket->status;
-        $ticket->update($validated);
-
-        if ($oldStatus !== $validated['status']) {
-            // LOCAL LOGGING: Ticket History
-            TicketActivity::create([
-                'ticket_id' => $ticket->id,
-                'user_id' => Auth::id(),
-                'action' => 'changed status',
-                'old_value' => $oldStatus,
-                'new_value' => $validated['status'],
-            ]);
-
-            // GLOBAL LOGGING: Enterprise Audit Trail
-            AuditLog::create([
-                'user_id' => Auth::id(),
-                'action' => 'Changed Ticket Status',
-                'target_type' => 'Ticket',
-                'target_id' => $ticket->id,
-                'old_value' => $oldStatus,
-                'new_value' => $validated['status'],
-            ]);
+        // Lock closed tickets from being edited by non-admins
+        if ($ticket->status === 'Closed' && Auth::user()->role->name !== 'admin') {
+            if ($request->wantsJson()) {
+                return response()->json(['message' => 'Closed tickets cannot be modified.'], 403);
+            }
+            abort(403, 'Closed tickets cannot be modified.');
         }
 
-        return redirect()->route('tickets.show', $ticket)->with('success', 'Ticket status updated successfully.');
+        // 2. Validate incoming data
+        $validated = $request->validate([
+            'status' => 'sometimes|string',
+            'priority' => 'sometimes|string',
+            'assigned_to' => 'sometimes|nullable',
+        ]);
+
+        // 3. Process changes and write to Audit Log
+        foreach ($validated as $key => $newValue) {
+            $oldValue = $ticket->{$key};
+
+            if ($oldValue != $newValue) {
+                // Update the ticket in the database
+                $ticket->update([$key => $newValue]);
+
+                // Format values nicely for the Audit Log
+                $friendlyKey = ucfirst(str_replace('_', ' ', $key));
+                $friendlyOld = $oldValue;
+                $friendlyNew = $newValue;
+
+                // If updating assigned agent, fetch their names instead of showing raw IDs
+                if ($key === 'assigned_to') {
+                    $friendlyOld = $oldValue ? \App\Models\User::find($oldValue)->name : 'Unassigned';
+                    $friendlyNew = $newValue ? \App\Models\User::find($newValue)->name : 'Unassigned';
+                }
+
+                \App\Models\AuditLog::create([
+                    'user_id' => Auth::id(),
+                    'action' => "Updated {$friendlyKey}",
+                    'target_type' => 'Ticket',
+                    'target_id' => $ticket->id,
+                    'old_value' => (string) $friendlyOld,
+                    'new_value' => (string) $friendlyNew,
+                ]);
+
+                // NEW: CSAT Reset Logic
+                // If the ticket WAS Resolved/Closed, and is NOW being reopened...
+                if ($key === 'status' && in_array($oldValue, ['Resolved', 'Closed']) && !in_array($newValue, ['Resolved', 'Closed'])) {
+
+                    // Only run the reset if a rating actually existed
+                    if ($ticket->rating !== null) {
+                        // 1. Wipe the scores from the database
+                        $ticket->update([
+                            'rating' => null,
+                            'csat_feedback' => null
+                        ]);
+
+                        // 2. Add a specific Audit Log entry explaining why the score vanished
+                        \App\Models\AuditLog::create([
+                            'user_id' => Auth::id(),
+                            'action' => 'Reset CSAT Score',
+                            'target_type' => 'Ticket',
+                            'target_id' => $ticket->id,
+                            'old_value' => "Previous Rating: {$ticket->rating} Stars",
+                            'new_value' => 'Cleared due to ticket reopen'
+                        ]);
+                    }
+                }
+            }
+        }
+
+        // 4. Return JSON if it's an AJAX request (Our Alpine logic)
+        if ($request->wantsJson()) {
+            return response()->json(['message' => 'Ticket updated successfully!']);
+        }
+
+        // Fallback for standard form submissions
+        return back()->with('success', 'Ticket updated successfully.');
     }
 
     public function destroy(Ticket $ticket)
@@ -179,5 +271,36 @@ class TicketController extends Controller
         ]);
 
         return redirect()->route('tickets.index')->with('success', 'Ticket deleted successfully.');
+    }
+
+    public function submitRating(Request $request, Ticket $ticket)
+    {
+        // Only the ticket creator can rate it
+        if (Auth::id() !== $ticket->user_id) {
+            abort(403, 'Only the ticket creator can leave feedback.');
+        }
+
+        // Only allow rating if resolved or closed, and not already rated
+        if (!in_array($ticket->status, ['Resolved', 'Closed']) || $ticket->rating) {
+            abort(400, 'This ticket cannot be rated at this time.');
+        }
+
+        $validated = $request->validate([
+            'rating' => 'required|integer|min:1|max:5',
+            'csat_feedback' => 'nullable|string|max:1000',
+        ]);
+
+        $ticket->update($validated);
+
+        // Log the CSAT score in our Audit Logs
+        \App\Models\AuditLog::create([
+            'user_id' => Auth::id(),
+            'action' => 'Submitted CSAT Rating',
+            'target_type' => 'Ticket',
+            'target_id' => $ticket->id,
+            'new_value' => "Rated {$validated['rating']} Stars",
+        ]);
+
+        return back()->with('success', 'Thank you for your feedback!');
     }
 }

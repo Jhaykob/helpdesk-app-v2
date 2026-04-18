@@ -13,44 +13,40 @@ class CommentController extends Controller
 {
     public function store(Request $request, Ticket $ticket)
     {
-        if (Auth::user()->role->name !== 'admin' && Auth::user()->role->name !== 'agent' && Auth::id() !== $ticket->user_id) {
-            abort(403, 'Unauthorized action.');
-        }
-
-        $validated = $request->validate([
+        $request->validate([
             'content' => 'required|string',
-            'is_internal' => 'nullable|boolean',
+            'attachment' => 'nullable|file|mimes:jpg,jpeg,png,pdf,doc,docx|max:2048', // 2MB Max
         ]);
 
-        $isInternal = $request->has('is_internal') && Auth::user()->role->name !== 'user';
+        // 1. Handle the file attachment
+        $path = null;
+        if ($request->hasFile('attachment')) {
+            $path = $request->file('attachment')->store('comments', 'public');
+        }
 
+        // 2. Handle the Internal Note flag securely
+        $isInternal = false;
+        if (Auth::user()->role->name === 'admin' || Auth::user()->role->name === 'agent') {
+            $isInternal = $request->has('is_internal');
+        }
+
+        // 3. Save the comment
         $ticket->comments()->create([
-            'content' => $validated['content'],
+            'content' => $request->content,
             'user_id' => Auth::id(),
+            'attachment_path' => $path,
             'is_internal' => $isInternal,
         ]);
 
-        // WRITE TO GLOBAL AUDIT LOG
-        AuditLog::create([
+        // Optional: Global Audit Log
+        \App\Models\AuditLog::create([
             'user_id' => Auth::id(),
-            'action' => 'Added Comment',
+            'action' => $isInternal ? 'Added Internal Note' : 'Added Public Reply',
             'target_type' => 'Ticket',
             'target_id' => $ticket->id,
-            'new_value' => $isInternal ? 'Internal Note' : 'Public Reply',
+            'new_value' => $path ? 'Included attachment' : 'Text only',
         ]);
 
-        if (!$isInternal) {
-            if (Auth::user()->role->name === 'admin' || Auth::user()->role->name === 'agent') {
-                $ticket->update(['status' => 'Pending Customer']);
-                $ticket->user->notify(new TicketUpdatedNotification($ticket, Auth::user()->name . ' replied to your ticket.'));
-            } elseif (Auth::id() === $ticket->user_id) {
-                $ticket->update(['status' => 'Pending Technician']);
-                if ($ticket->assignedTo) {
-                    $ticket->assignedTo->notify(new TicketUpdatedNotification($ticket, 'The customer replied to ticket #' . $ticket->id));
-                }
-            }
-        }
-
-        return redirect()->route('tickets.show', $ticket)->with('success', 'Comment added successfully.');
+        return back()->with('success', $isInternal ? 'Internal note added.' : 'Reply sent successfully.');
     }
 }

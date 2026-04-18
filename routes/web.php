@@ -31,6 +31,9 @@ Route::middleware(['auth', CheckActiveUser::class])->group(function () {
     Route::patch('/tickets/{ticket}/claim', [TicketController::class, 'claim'])->name('tickets.claim');
     Route::post('/tickets/{ticket}/comments', [CommentController::class, 'store'])->name('comments.store');
 
+    // <-- ADD THIS LINE FOR CSAT -->
+    Route::post('/tickets/{ticket}/rate', [TicketController::class, 'submitRating'])->name('tickets.rate');
+
     // Users
     Route::post('/users', [UserController::class, 'store'])->name('users.store');
     Route::get('/users', [UserController::class, 'index'])->name('users.index');

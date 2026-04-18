@@ -41,6 +41,51 @@
                 </div>
             @endif
 
+            <div class="mb-6 bg-white p-4 rounded-lg shadow-sm border border-gray-200">
+                <form method="GET" action="{{ route('tickets.index') }}" class="flex flex-col md:flex-row gap-4 items-end md:items-center">
+
+                    <div class="w-full md:w-1/3 relative">
+                        <label for="search" class="block text-xs font-medium text-gray-700 mb-1">Search Tickets</label>
+                        <div class="relative flex items-center">
+                            <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                                <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                            </div>
+                            <input type="text" name="search" id="search" value="{{ request('search') }}" placeholder="Search by title or ID..." class="block w-full pl-9 py-2 border border-gray-300 rounded-md leading-5 bg-white placeholder-gray-500 focus:outline-none focus:ring-red-500 focus:border-red-500 sm:text-sm">
+                        </div>
+                    </div>
+
+                    <div class="w-full md:w-1/4">
+                        <label for="status" class="block text-xs font-medium text-gray-700 mb-1">Status</label>
+                        <select name="status" id="status" class="block w-full py-2 border border-gray-300 rounded-md leading-5 bg-white focus:outline-none focus:ring-red-500 focus:border-red-500 sm:text-sm">
+                            <option value="">All Statuses</option>
+                            <option value="Unassigned" {{ request('status') == 'Unassigned' ? 'selected' : '' }}>Unassigned</option>
+                            <option value="Open" {{ request('status') == 'Open' ? 'selected' : '' }}>Open</option>
+                            <option value="Pending Customer" {{ request('status') == 'Pending Customer' ? 'selected' : '' }}>Pending Customer</option>
+                            <option value="Pending Technician" {{ request('status') == 'Pending Technician' ? 'selected' : '' }}>Pending Technician</option>
+                            <option value="Resolved" {{ request('status') == 'Resolved' ? 'selected' : '' }}>Resolved</option>
+                            <option value="Closed" {{ request('status') == 'Closed' ? 'selected' : '' }}>Closed</option>
+                        </select>
+                    </div>
+
+                    <div class="w-full md:w-1/4">
+                        <label for="priority" class="block text-xs font-medium text-gray-700 mb-1">Priority</label>
+                        <select name="priority" id="priority" class="block w-full py-2 border border-gray-300 rounded-md leading-5 bg-white focus:outline-none focus:ring-red-500 focus:border-red-500 sm:text-sm">
+                            <option value="">All Priorities</option>
+                            <option value="Low" {{ request('priority') == 'Low' ? 'selected' : '' }}>Low</option>
+                            <option value="Medium" {{ request('priority') == 'Medium' ? 'selected' : '' }}>Medium</option>
+                            <option value="High" {{ request('priority') == 'High' ? 'selected' : '' }}>High</option>
+                        </select>
+                    </div>
+
+                    <div class="w-full md:w-auto flex gap-2">
+                        <button type="submit" class="w-full md:w-auto bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm font-medium transition shadow-sm">Apply</button>
+                        @if(request()->hasAny(['search', 'status', 'priority']) && (request('search') || request('status') || request('priority')))
+                            <a href="{{ route('tickets.index') }}" class="w-full md:w-auto flex items-center justify-center bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded-md text-sm font-medium transition border border-gray-300">Clear</a>
+                        @endif
+                    </div>
+                </form>
+            </div>
+
             <div class="bg-white overflow-hidden shadow-sm sm:rounded-lg border-t-4 border-red-600">
                 <div class="p-6 text-gray-900 overflow-x-auto">
                     <table class="min-w-full divide-y divide-gray-200">
@@ -117,11 +162,19 @@
                                 </tr>
                             @empty
                                 <tr>
-                                    <td colspan="7" class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 text-center">No tickets found.</td>
+                                    <td colspan="7" class="px-6 py-8 whitespace-nowrap text-sm text-gray-500 text-center">
+                                        <svg class="mx-auto h-12 w-12 text-gray-400 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path></svg>
+                                        No tickets found matching your criteria.
+                                    </td>
                                 </tr>
                             @endforelse
                         </tbody>
                     </table>
+
+                    <div class="mt-4">
+                        {{ $tickets->links() }}
+                    </div>
+
                 </div>
             </div>
         </div>
