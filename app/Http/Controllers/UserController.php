@@ -87,4 +87,31 @@ class UserController extends Controller
 
         return back()->with('success', "{$user->name}'s role has been updated.");
     }
+
+    public function toggleStatus(User $user)
+    {
+        if (Auth::user()->role->name !== 'admin') {
+            abort(403, 'Unauthorized action.');
+        }
+
+        // Prevent the admin from accidentally suspending themselves
+        if ($user->id === Auth::id()) {
+            return back()->withErrors(['status' => 'You cannot suspend your own admin account.']);
+        }
+
+        // Flip the boolean
+        $user->update(['is_active' => !$user->is_active]);
+        $status = $user->is_active ? 'Reactivated' : 'Suspended';
+
+        // WRITE TO GLOBAL AUDIT LOG
+        AuditLog::create([
+            'user_id' => Auth::id(),
+            'action' => "{$status} User Account",
+            'target_type' => 'User',
+            'target_id' => $user->id,
+            'new_value' => "Account {$status}",
+        ]);
+
+        return back()->with('success', "User {$user->name} has been successfully {$status}.");
+    }
 }

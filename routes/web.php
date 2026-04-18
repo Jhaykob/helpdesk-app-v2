@@ -7,6 +7,7 @@ use App\Http\Controllers\CommentController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\AuditLogController;
 use App\Http\Controllers\KnowledgeBaseController;
+use App\Http\Middleware\CheckActiveUser; // <-- Our Security Guard
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Auth;
 
@@ -14,37 +15,37 @@ Route::get('/', function () {
     return view('welcome');
 });
 
-Route::get('/dashboard', [DashboardController::class, 'index'])
-    ->middleware(['auth', 'verified'])
-    ->name('dashboard');
+// ABSOLUTE SECURITY: Every authenticated route sits inside this fortress
+Route::middleware(['auth', CheckActiveUser::class])->group(function () {
 
-Route::middleware('auth')->group(function () {
+    // Dashboard
+    Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
+
+    // Profile
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
     Route::patch('/profile', [ProfileController::class, 'update'])->name('profile.update');
     Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
 
-    // This single line automatically creates URLs for index, create, store, show, edit, update, and destroy!
+    // Tickets
     Route::resource('tickets', TicketController::class);
-
-    // <-- ADD THIS CLAIM ROUTE -->
     Route::patch('/tickets/{ticket}/claim', [TicketController::class, 'claim'])->name('tickets.claim');
-
     Route::post('/tickets/{ticket}/comments', [CommentController::class, 'store'])->name('comments.store');
 
-    // <-- ADD THESE USER MANAGEMENT ROUTES -->
+    // Users
     Route::post('/users', [UserController::class, 'store'])->name('users.store');
     Route::get('/users', [UserController::class, 'index'])->name('users.index');
     Route::patch('/users/{user}/role', [UserController::class, 'updateRole'])->name('users.updateRole');
+    Route::patch('/users/{user}/toggle-status', [UserController::class, 'toggleStatus'])->name('users.toggleStatus');
 
-    // <-- NEW: Route to mark notifications as read -->
+    // Notifications & Audit Logs
     Route::post('/notifications/mark-read', function () {
         Auth::user()->unreadNotifications->markAsRead();
         return back();
     })->name('notifications.read');
 
-    // <-- NEW: Global Audit Logs Route -->
     Route::get('/audit-logs', [AuditLogController::class, 'index'])->name('audit-logs.index');
 
+    // Knowledge Base API
     Route::get('/kb/search', [KnowledgeBaseController::class, 'search'])->name('kb.search');
 });
 

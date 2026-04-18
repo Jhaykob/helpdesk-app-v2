@@ -39,20 +39,27 @@
                                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Email</th>
                                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Registered On</th>
                                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Current Role</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Account Status</th>
                                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Change Role</th>
                             </tr>
                         </thead>
                         <tbody class="bg-white divide-y divide-gray-200">
                             @foreach ($users as $user)
                                 <tr class="hover:bg-gray-50 transition-colors duration-200">
+
                                     <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 flex items-center gap-3">
-                                        <div class="w-8 h-8 rounded-full flex items-center justify-center font-bold text-white text-xs {{ $user->role->name === 'admin' ? 'bg-red-600' : ($user->role->name === 'agent' ? 'bg-blue-600' : 'bg-gray-500') }}">
+                                        <div class="w-8 h-8 rounded-full flex items-center justify-center font-bold text-white text-xs {{ $user->role->name === 'admin' ? 'bg-red-600' : ($user->role->name === 'agent' ? 'bg-blue-600' : 'bg-gray-500') }} {{ !$user->is_active ? 'opacity-50' : '' }}">
                                             {{ substr($user->name, 0, 1) }}
                                         </div>
-                                        {{ $user->name }}
+                                        <span class="{{ !$user->is_active ? 'text-gray-400 line-through' : '' }}">{{ $user->name }}</span>
+                                        @if(!$user->is_active)
+                                            <span class="ml-2 px-2 py-0.5 text-[10px] font-bold bg-red-100 text-red-800 rounded-full uppercase tracking-wider">Suspended</span>
+                                        @endif
                                     </td>
+
                                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{{ $user->email }}</td>
                                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{{ $user->created_at->format('M d, Y') }}</td>
+
                                     <td class="px-6 py-4 whitespace-nowrap text-sm">
                                         <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full
                                             {{ $user->role->name === 'admin' ? 'bg-red-100 text-red-800' : '' }}
@@ -61,6 +68,22 @@
                                             {{ ucfirst($user->role->name) }}
                                         </span>
                                     </td>
+
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                        @if($user->id !== Auth::id())
+                                            <form method="POST" action="{{ route('users.toggleStatus', $user) }}">
+                                                @csrf
+                                                @method('PATCH')
+                                                <button type="submit" class="text-xs font-bold py-1.5 px-3 rounded shadow transition
+                                                    {{ $user->is_active ? 'bg-orange-100 text-orange-800 hover:bg-orange-200' : 'bg-green-100 text-green-800 hover:bg-green-200' }}">
+                                                    {{ $user->is_active ? 'Suspend Access' : 'Reactivate' }}
+                                                </button>
+                                            </form>
+                                        @else
+                                            <span class="text-xs text-gray-400 italic">Current User</span>
+                                        @endif
+                                    </td>
+
                                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                                         <form method="POST" action="{{ route('users.updateRole', $user) }}" class="flex items-center gap-2">
                                             @csrf
