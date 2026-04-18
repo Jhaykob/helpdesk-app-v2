@@ -5,9 +5,12 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\SoftDeletes; // <-- 1. ADD THIS IMPORT
 
 class Ticket extends Model
 {
+    use SoftDeletes; // <-- 2. ADD THE TRAIT HERE
+
     protected $fillable = [
         'title',
         'description',
