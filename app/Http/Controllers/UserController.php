@@ -11,27 +11,38 @@ use Illuminate\Support\Facades\Hash; // <-- ADDED FOR SECURE PASSWORDS
 
 class UserController extends Controller
 {
-    public function index(Request $request) // <-- Add Request $request here
+    public function index(Request $request)
     {
         if (Auth::user()->role->name !== 'admin') {
             abort(403, 'Unauthorized action.');
         }
 
         $search = $request->input('search');
+        $roleFilter = $request->input('role');
+        $statusFilter = $request->input('status');
 
-        // Fetch users with search filtering and pagination
         $users = User::with('role')
             ->when($search, function ($query, $search) {
-                $query->where('name', 'like', "%{$search}%")
-                    ->orWhere('email', 'like', "%{$search}%");
+                // Group the search conditions so they don't break the filters
+                $query->where(function ($q) use ($search) {
+                    $q->where('name', 'like', "%{$search}%")
+                        ->orWhere('email', 'like', "%{$search}%");
+                });
+            })
+            ->when($roleFilter, function ($query, $roleFilter) {
+                $query->where('role_id', $roleFilter);
+            })
+            ->when($request->filled('status'), function ($query) use ($statusFilter) {
+                // Using filled() because '0' (Suspended) evaluates to false in standard PHP checks
+                $query->where('is_active', $statusFilter);
             })
             ->latest()
-            ->paginate(10) // <-- 10 users per page
-            ->withQueryString(); // <-- Keeps the search term active across pages
+            ->paginate(10)
+            ->withQueryString(); // Keeps filters active across pagination!
 
         $roles = Role::all();
 
-        return view('users.index', compact('users', 'roles', 'search'));
+        return view('users.index', compact('users', 'roles', 'search', 'roleFilter', 'statusFilter'));
     }
 
     // NEW: Create User Method

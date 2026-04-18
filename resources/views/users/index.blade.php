@@ -30,18 +30,50 @@
                 </div>
             @endif
 
-            <div class="mb-6 bg-white p-4 rounded-lg shadow-sm border border-gray-200 flex justify-between items-center">
-                <form method="GET" action="{{ route('users.index') }}" class="w-full max-w-md relative flex items-center">
-                    <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                        <svg class="h-5 w-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+            <div class="mb-6 bg-white p-4 rounded-lg shadow-sm border border-gray-200">
+                <form method="GET" action="{{ route('users.index') }}" class="flex flex-col md:flex-row gap-4 items-end md:items-center">
+
+                    <div class="w-full md:w-1/3 relative">
+                        <label for="search" class="block text-xs font-medium text-gray-700 mb-1">Search</label>
+                        <div class="relative flex items-center">
+                            <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                                <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                            </div>
+                            <input type="text" name="search" id="search" value="{{ request('search') }}" placeholder="Name or email..." class="block w-full pl-9 py-2 border border-gray-300 rounded-md leading-5 bg-white placeholder-gray-500 focus:outline-none focus:ring-red-500 focus:border-red-500 sm:text-sm">
+                        </div>
                     </div>
-                    <input type="text" name="search" value="{{ request('search') }}" placeholder="Search users by name or email..." class="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-l-md leading-5 bg-white placeholder-gray-500 focus:outline-none focus:ring-red-500 focus:border-red-500 sm:text-sm transition duration-150 ease-in-out">
-                    <button type="submit" class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-r-md text-sm font-medium border border-transparent transition">
-                        Search
-                    </button>
-                    @if(request('search'))
-                        <a href="{{ route('users.index') }}" class="ml-3 text-sm text-red-600 hover:text-red-800 hover:underline">Clear</a>
-                    @endif
+
+                    <div class="w-full md:w-1/4">
+                        <label for="role" class="block text-xs font-medium text-gray-700 mb-1">Filter by Role</label>
+                        <select name="role" id="role" class="block w-full py-2 border border-gray-300 rounded-md leading-5 bg-white focus:outline-none focus:ring-red-500 focus:border-red-500 sm:text-sm">
+                            <option value="">All Roles</option>
+                            @foreach($roles as $roleOption)
+                                <option value="{{ $roleOption->id }}" {{ request('role') == $roleOption->id ? 'selected' : '' }}>
+                                    {{ ucfirst($roleOption->name) }}
+                                </option>
+                            @endforeach
+                        </select>
+                    </div>
+
+                    <div class="w-full md:w-1/4">
+                        <label for="status" class="block text-xs font-medium text-gray-700 mb-1">Filter by Status</label>
+                        <select name="status" id="status" class="block w-full py-2 border border-gray-300 rounded-md leading-5 bg-white focus:outline-none focus:ring-red-500 focus:border-red-500 sm:text-sm">
+                            <option value="">All Statuses</option>
+                            <option value="1" {{ request('status') === '1' ? 'selected' : '' }}>Active</option>
+                            <option value="0" {{ request('status') === '0' ? 'selected' : '' }}>Suspended</option>
+                        </select>
+                    </div>
+
+                    <div class="w-full md:w-auto flex gap-2">
+                        <button type="submit" class="w-full md:w-auto bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm font-medium border border-transparent transition shadow-sm">
+                            Apply
+                        </button>
+                        @if(request()->hasAny(['search', 'role', 'status']) && (request('search') || request('role') || request()->filled('status')))
+                            <a href="{{ route('users.index') }}" class="w-full md:w-auto flex items-center justify-center bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded-md text-sm font-medium transition border border-gray-300">
+                                Clear
+                            </a>
+                        @endif
+                    </div>
                 </form>
             </div>
 
@@ -117,7 +149,10 @@
                                 </tr>
                             @empty
                                 <tr>
-                                    <td colspan="6" class="px-6 py-4 text-center text-sm text-gray-500">No users found matching your search.</td>
+                                    <td colspan="6" class="px-6 py-4 text-center text-sm text-gray-500 py-8">
+                                        <svg class="mx-auto h-12 w-12 text-gray-400 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path></svg>
+                                        No users found matching your filters.
+                                    </td>
                                 </tr>
                             @endforelse
                         </tbody>
