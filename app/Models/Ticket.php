@@ -6,7 +6,6 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
-use Carbon\Carbon; // <-- ADDED FOR DATE MATH
 
 class Ticket extends Model
 {
@@ -17,11 +16,20 @@ class Ticket extends Model
         'description',
         'status',
         'priority',
+        'category_id',
         'user_id',
         'assigned_to',
-        'sla_deadline',
         'rating',
         'csat_feedback',
+        // I REMOVED attachment_path from here!
+        'sla_deadline',
+        'is_breaching_sla'
+    ];
+
+    // Ensure dates are parsed as Carbon instances and booleans are cast correctly
+    protected $casts = [
+        'sla_deadline' => 'datetime',
+        'is_breaching_sla' => 'boolean',
     ];
 
     public function user(): BelongsTo
@@ -49,29 +57,16 @@ class Ticket extends Model
         return $this->hasMany(TicketActivity::class)->latest();
     }
 
-    // NEW: Calculate the exact SLA deadline timestamp
-    public function getSlaDeadlineAttribute()
-    {
-        $hours = match ($this->priority) {
-            'High' => 24,
-            'Medium' => 48,
-            'Low' => 72,
-            default => 72,
-        };
-
-        return $this->created_at->addHours($hours);
-    }
-
-    // NEW: Check if the ticket is currently breaching its SLA
+    // Real-time check if the ticket is currently breaching its SLA
     public function getIsBreachingSlaAttribute()
     {
-        // If it's resolved or closed, it's no longer breaching
-        if (in_array($this->status, ['Resolved', 'Closed'])) {
+        // If it has no deadline, or it's resolved/closed, it's safe
+        if (!$this->sla_deadline || in_array($this->status, ['Resolved', 'Closed'])) {
             return false;
         }
 
-        // Return true if the current time is past the deadline
-        return now()->greaterThan($this->slaDeadline);
+        // Return true if the current time is past the database deadline
+        return now()->greaterThan($this->sla_deadline);
     }
 
     // The agents who have been invited to collaborate on this ticket

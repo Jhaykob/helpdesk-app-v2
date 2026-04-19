@@ -4,11 +4,14 @@ namespace App\Http\Controllers;
 
 use App\Models\Ticket;
 use App\Models\TicketActivity;
-use App\Models\AuditLog; // <-- ADDED GLOBAL AUDIT LOG IMPORT
+use App\Models\AuditLog;
 use App\Models\Macro;
+use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Str;
 
 class TicketController extends Controller
 {
@@ -24,7 +27,6 @@ class TicketController extends Controller
         if (!$user->hasRole('admin') && !$user->hasRole('agent') && !$user->hasRole('super-admin')) {
             $query->where('user_id', $user->id);
         }
-        // If they ARE an admin or agent, the block above is skipped, granting them global access!
 
         // Apply Search Filter
         if ($request->filled('search')) {
@@ -48,78 +50,149 @@ class TicketController extends Controller
         // Fetch the results, paginated
         $tickets = $query->latest()->paginate(10)->withQueryString();
 
-        return view('tickets.index', compact('tickets'));
+        // ---------------------------------------------------------
+        // MODAL DATA: Fetch users for the "On Behalf Of" agent tool
+        // ---------------------------------------------------------
+        $users = [];
+        if ($user->hasRole('admin') || $user->hasRole('agent') || $user->hasRole('super-admin')) {
+            $users = User::orderBy('name')->get();
+        }
+
+        return view('tickets.index', compact('tickets', 'users'));
     }
 
     public function store(Request $request)
     {
-        $validated = $request->validate([
-            'title' => 'required|string|max:255',
-            'description' => 'required|string',
-            'category_id' => 'required|integer', // Added to support your UI dropdown
-            'priority' => 'required|in:Low,Medium,High',
-            'attachment' => 'nullable|file|mimes:jpg,jpeg,png,pdf,doc,docx|max:2048',
-        ]);
-
         /** @var \App\Models\User $user */
         $user = Auth::user();
+        $isAgentOrAdmin = $user->hasRole('admin') || $user->hasRole('agent') || $user->hasRole('super-admin');
 
+        // 1. Dynamic Validation Rules
+        $rules = [
+            'title' => 'required|string|max:255',
+            'description' => 'required|string',
+            'category_id' => 'required|integer',
+            'priority' => 'required|in:Low,Medium,High,Urgent',
+            'attachment' => 'nullable|file|mimes:jpg,jpeg,png,pdf,doc,docx|max:2048',
+        ];
+
+        // Add extra validation if the user submitting is an agent using the On Behalf Of tools
+        if ($isAgentOrAdmin) {
+            $rules['requester_type'] = 'required|in:self,existing,new';
+            $rules['existing_user_id'] = 'required_if:requester_type,existing|nullable|exists:users,id';
+            $rules['new_user_name'] = 'required_if:requester_type,new|nullable|string|max:255';
+            $rules['new_user_email'] = 'required_if:requester_type,new|nullable|email|unique:users,email';
+        }
+
+        $validated = $request->validate($rules);
+
+        // 2. Determine the Ticket Owner (Auto-Provisioning Logic)
+        $ticketOwnerId = $user->id; // Default to the person submitting the form
+
+        if ($isAgentOrAdmin) {
+            if ($request->requester_type === 'existing') {
+                $ticketOwnerId = $request->existing_user_id;
+            } elseif ($request->requester_type === 'new') {
+                // Auto-Provision the new user!
+                $newUser = User::create([
+                    'name' => $request->new_user_name,
+                    'email' => $request->new_user_email,
+                    'password' => Hash::make(Str::random(16)), // Secure random password
+                ]);
+                $newUser->assignRole('user'); // Give them standard user permissions
+                $ticketOwnerId = $newUser->id;
+            }
+        }
+
+        // 3. Determine Assignment & Status
+        $assignedTo = null;
+        $status = 'Unassigned';
+
+        // Did the agent check "Assign to me"?
+        if ($isAgentOrAdmin && $request->has('assign_to_me')) {
+            $assignedTo = $user->id;
+            $status = 'Open';
+        }
+
+        // 4. Handle the secure file attachment
+        $path = null;
+        if ($request->hasFile('attachment')) {
+            $file = $request->file('attachment');
+            $fileName = time() . '_' . $file->getClientOriginalName();
+            $path = $file->storeAs('attachments', $fileName, 'local');
+        }
+
+        // 5. Create the Ticket
         $ticket = Ticket::create([
             'title' => $validated['title'],
             'description' => $validated['description'],
             'category_id' => $validated['category_id'],
             'priority' => $validated['priority'],
-            'status' => 'Unassigned',
-            'user_id' => $user->id,
+            'status' => $status,
+            'user_id' => $ticketOwnerId,
+            'assigned_to' => $assignedTo,
+            // I REMOVED the attachment_path line from here!
+            'sla_deadline' => \Carbon\Carbon::now()->addHours(
+                \Illuminate\Support\Facades\Cache::get('sla_' . strtolower($validated['priority']) . '_hours', 24)
+            ),
         ]);
 
-        // LOCAL LOGGING: Ticket History
+        if ($path) {
+            $ticket->attachments()->create([
+                'file_name' => $fileName,
+                'file_path' => $path,
+            ]);
+        }
+
+        // 6. Local Ticket Activity History
         TicketActivity::create([
             'ticket_id' => $ticket->id,
             'user_id' => $user->id,
             'action' => 'created the ticket',
         ]);
 
-        // GLOBAL LOGGING: Enterprise Audit Trail
+        // 7. Global Audit Logging
         AuditLog::create([
             'user_id' => $user->id,
             'action' => 'Created Ticket',
             'target_type' => 'Ticket',
             'target_id' => $ticket->id,
-            'new_value' => 'Status: Unassigned',
+            'new_value' => $ticketOwnerId !== $user->id ? "Created on behalf of User ID: {$ticketOwnerId}" : 'Standard creation',
         ]);
 
-        if ($request->hasFile('attachment')) {
-            $file = $request->file('attachment');
-            $fileName = time() . '_' . $file->getClientOriginalName();
+        // 8. Notifications
 
-            // SECURITY UPDATE: Save to the private 'local' disk instead of 'public'
-            $filePath = $file->storeAs('attachments', $fileName, 'local');
+        // A. Notify the Ticket Owner (The Customer) - Triggers Email AND Bell Icon
+        if (\Illuminate\Support\Facades\Cache::get('send_email_notifications', '1') == '1') {
+            $ticketOwner = User::find($ticketOwnerId);
 
-            $ticket->attachments()->create([
-                'file_name' => $fileName,
-                'file_path' => $filePath,
-            ]);
+            // Check if this was a brand new auto-provisioned user
+            $isNewUser = $isAgentOrAdmin && $request->requester_type === 'new';
+
+            // Fire the notification!
+            $ticketOwner->notify(new \App\Notifications\TicketCreatedNotification($ticket, $isNewUser));
         }
 
-        // NEW: Alert all Admins and Agents about the new unassigned ticket
-        $staffMembers = \App\Models\User::role(['admin', 'agent', 'super-admin'])->get();
-        \Illuminate\Support\Facades\Notification::send($staffMembers, new \App\Notifications\NewTicketNotification($ticket));
+        // B. Notify the Staff (Only if the ticket drops into the unassigned queue)
+        if (is_null($assignedTo)) {
+            $staffMembers = User::role(['admin', 'agent', 'super-admin'])->get();
+            \Illuminate\Support\Facades\Notification::send($staffMembers, new \App\Notifications\NewTicketNotification($ticket));
+        }
 
         return redirect()->route('tickets.index')->with('success', 'Ticket created successfully.');
     }
+
+    // ... (Keep the rest of your methods exactly as they are: claim, show, update, destroy, submitRating, etc.)
 
     public function claim(Request $request, Ticket $ticket)
     {
         /** @var \App\Models\User $user */
         $user = Auth::user();
 
-        // Security: Must be an admin or agent
         if (!$user->hasRole('admin') && !$user->hasRole('agent')) {
             abort(403, 'Unauthorized action.');
         }
 
-        // Prevent claiming if already assigned
         if (!is_null($ticket->assigned_to)) {
             return back()->withErrors(['error' => 'This ticket has already been claimed by another agent.']);
         }
@@ -129,8 +202,7 @@ class TicketController extends Controller
             'status' => 'Open',
         ]);
 
-        // Log the action securely
-        \App\Models\AuditLog::create([
+        AuditLog::create([
             'user_id' => $user->id,
             'action' => 'Claimed Ticket',
             'target_type' => 'Ticket',
@@ -148,37 +220,29 @@ class TicketController extends Controller
             abort(403, 'Unauthorized action.');
         }
 
-        // Maintained your original eager loading
         $ticket->load(['comments.user', 'user', 'assignedTo', 'activities.user']);
 
-        // NEW: Fetch only Global macros, OR the user's personal macros
-        // NEW: Fetch only Global macros, OR the user's personal macros
         /** @var \App\Models\User $user */
         $user = Auth::user();
-        $macros = \App\Models\Macro::where('is_global', true)
+        $macros = Macro::where('is_global', true)
             ->orWhere('user_id', $user->id)
             ->orderBy('title')
             ->get();
 
-        // NEW: Fetch agents for the "Assign To" dropdown in the sidebar
         $agents = [];
         if ($user->hasRole('admin') || $user->hasRole('agent')) {
-            // SPATIE FIX: Use Spatie's elegant role() scope instead of whereHas!
-            $agents = \App\Models\User::role(['admin', 'agent'])->get();
+            $agents = User::role(['admin', 'agent'])->get();
         }
 
-        // Pass everything the updated view requires
         return view('tickets.show', compact('ticket', 'macros', 'agents'));
     }
 
     public function update(Request $request, Ticket $ticket)
     {
-        // 1. Security Check
-        if (!in_array(Auth::user()->role->name, ['admin', 'agent'])) {
+        if (!in_array(Auth::user()->role->name, ['admin', 'agent', 'super-admin'])) {
             abort(403, 'Unauthorized action.');
         }
 
-        // Lock closed tickets from being edited by non-admins
         if ($ticket->status === 'Closed' && Auth::user()->role->name !== 'admin') {
             if ($request->wantsJson()) {
                 return response()->json(['message' => 'Closed tickets cannot be modified.'], 403);
@@ -186,33 +250,28 @@ class TicketController extends Controller
             abort(403, 'Closed tickets cannot be modified.');
         }
 
-        // 2. Validate incoming data
         $validated = $request->validate([
             'status' => 'sometimes|string',
             'priority' => 'sometimes|string',
             'assigned_to' => 'sometimes|nullable',
         ]);
 
-        // 3. Process changes and write to Audit Log
         foreach ($validated as $key => $newValue) {
             $oldValue = $ticket->{$key};
 
             if ($oldValue != $newValue) {
-                // Update the ticket in the database
                 $ticket->update([$key => $newValue]);
 
-                // Format values nicely for the Audit Log
                 $friendlyKey = ucfirst(str_replace('_', ' ', $key));
                 $friendlyOld = $oldValue;
                 $friendlyNew = $newValue;
 
-                // If updating assigned agent, fetch their names instead of showing raw IDs
                 if ($key === 'assigned_to') {
-                    $friendlyOld = $oldValue ? \App\Models\User::find($oldValue)->name : 'Unassigned';
-                    $friendlyNew = $newValue ? \App\Models\User::find($newValue)->name : 'Unassigned';
+                    $friendlyOld = $oldValue ? User::find($oldValue)->name : 'Unassigned';
+                    $friendlyNew = $newValue ? User::find($newValue)->name : 'Unassigned';
                 }
 
-                \App\Models\AuditLog::create([
+                AuditLog::create([
                     'user_id' => Auth::id(),
                     'action' => "Updated {$friendlyKey}",
                     'target_type' => 'Ticket',
@@ -221,20 +280,14 @@ class TicketController extends Controller
                     'new_value' => (string) $friendlyNew,
                 ]);
 
-                // NEW: CSAT Reset Logic
-                // If the ticket WAS Resolved/Closed, and is NOW being reopened...
                 if ($key === 'status' && in_array($oldValue, ['Resolved', 'Closed']) && !in_array($newValue, ['Resolved', 'Closed'])) {
-
-                    // Only run the reset if a rating actually existed
                     if ($ticket->rating !== null) {
-                        // 1. Wipe the scores from the database
                         $ticket->update([
                             'rating' => null,
                             'csat_feedback' => null
                         ]);
 
-                        // 2. Add a specific Audit Log entry explaining why the score vanished
-                        \App\Models\AuditLog::create([
+                        AuditLog::create([
                             'user_id' => Auth::id(),
                             'action' => 'Reset CSAT Score',
                             'target_type' => 'Ticket',
@@ -245,23 +298,18 @@ class TicketController extends Controller
                     }
                 }
 
-                // NEW: Resolution Email Trigger
-                // If the status is changing TO Resolved...
                 if ($key === 'status' && $newValue === 'Resolved' && $oldValue !== 'Resolved') {
-                    // Check if Global Settings allow emails to be sent
-                    if (\App\Models\Setting::get('send_email_notifications', '1') == '1') {
+                    if (\Illuminate\Support\Facades\Cache::get('send_email_notifications', '1') == '1') {
                         $ticket->user->notify(new \App\Notifications\TicketResolvedNotification($ticket));
                     }
                 }
             }
         }
 
-        // 4. Return JSON if it's an AJAX request (Our Alpine logic)
         if ($request->wantsJson()) {
             return response()->json(['message' => 'Ticket updated successfully!']);
         }
 
-        // Fallback for standard form submissions
         return back()->with('success', 'Ticket updated successfully.');
     }
 
@@ -271,10 +319,9 @@ class TicketController extends Controller
             abort(403, 'Unauthorized action.');
         }
 
-        $ticketId = $ticket->id; // Grab ID before soft-deleting
+        $ticketId = $ticket->id;
         $ticket->delete();
 
-        // GLOBAL LOGGING: Enterprise Audit Trail
         AuditLog::create([
             'user_id' => Auth::id(),
             'action' => 'Deleted Ticket',
@@ -297,14 +344,13 @@ class TicketController extends Controller
             abort(403);
         }
 
-        // FORCE the status to 'Closed' simultaneously with saving the rating
         $ticket->update([
             'rating' => $request->rating,
             'csat_feedback' => $request->csat_feedback,
             'status' => 'Closed',
         ]);
 
-        \App\Models\AuditLog::create([
+        AuditLog::create([
             'user_id' => Auth::id(),
             'action' => 'Closed Ticket via CSAT',
             'target_type' => 'Ticket',
@@ -317,13 +363,10 @@ class TicketController extends Controller
 
     public function confirmResolution(Ticket $ticket)
     {
-        // Security: Only the ticket owner can do this
         if (Auth::id() !== $ticket->user_id) {
             abort(403, 'Unauthorized action.');
         }
 
-        // Redirect them to the ticket page, but append a special anchor
-        // to jump them straight down to the rating box!
         return redirect()->route('tickets.show', $ticket)
             ->with('success', 'Thank you for confirming!')
             ->with('resolution_confirmed', true);
@@ -331,17 +374,14 @@ class TicketController extends Controller
 
     public function rejectResolution(Ticket $ticket)
     {
-        // Security: Only the ticket owner can do this
         if (Auth::id() !== $ticket->user_id) {
             abort(403, 'Unauthorized action.');
         }
 
-        // Only process this if it's actually in a Resolved state
         if ($ticket->status === 'Resolved') {
             $ticket->update(['status' => 'Open']);
 
-            // 1. Log it in the Global Audit Trail
-            \App\Models\AuditLog::create([
+            AuditLog::create([
                 'user_id' => Auth::id(),
                 'action' => 'Rejected Resolution',
                 'target_type' => 'Ticket',
@@ -350,7 +390,6 @@ class TicketController extends Controller
                 'new_value' => 'Open (Reopened via Email)',
             ]);
 
-            // 2. Alert the Assigned Technician!
             if ($ticket->assignedTo) {
                 $ticket->assignedTo->notify(new \App\Notifications\TicketReopenedNotification($ticket));
             }
@@ -370,23 +409,19 @@ class TicketController extends Controller
         /** @var \App\Models\User $currentUser */
         $currentUser = Auth::user();
 
-        // Security: Only the assigned agent or an admin can invite collaborators
         if ($ticket->assigned_to !== $currentUser->id && !$currentUser->hasRole('admin')) {
             abort(403, 'Only the assigned agent or an admin can invite collaborators.');
         }
 
-        $invitedUser = \App\Models\User::findOrFail($request->user_id);
+        $invitedUser = User::findOrFail($request->user_id);
 
-        // Prevent inviting the assigned agent or someone already collaborating
         if ($ticket->assigned_to === $invitedUser->id || $ticket->collaborators->contains($invitedUser->id)) {
             return back()->withErrors(['error' => 'This user is already working on this ticket.']);
         }
 
-        // Attach the user to the ticket via the pivot table
         $ticket->collaborators()->attach($invitedUser->id);
 
-        // Global Audit Logging
-        \App\Models\AuditLog::create([
+        AuditLog::create([
             'user_id' => $currentUser->id,
             'action' => 'Added Collaborator',
             'target_type' => 'Ticket',
@@ -394,7 +429,6 @@ class TicketController extends Controller
             'new_value' => 'Added: ' . $invitedUser->name,
         ]);
 
-        // Send the notification
         $invitedUser->notify(new \App\Notifications\TicketCollaboratorNotification($ticket, $currentUser));
 
         return back()->with('success', $invitedUser->name . ' has been invited to collaborate.');
@@ -405,7 +439,6 @@ class TicketController extends Controller
         /** @var \App\Models\User $user */
         $user = Auth::user();
 
-        // Security check: Only people involved with the ticket can download this file
         $isCreator = $ticket->user_id === $user->id;
         $isAssignee = $ticket->assigned_to === $user->id;
         $isAdmin = $user->hasRole('admin') || $user->hasRole('super-admin');
@@ -415,30 +448,22 @@ class TicketController extends Controller
             abort(403, 'You do not have permission to view this attachment.');
         }
 
-        // Ensure the requested file actually belongs to this specific ticket
         if ($attachment->ticket_id !== $ticket->id) {
             abort(404);
         }
 
         /** @var \Illuminate\Filesystem\FilesystemAdapter $localDisk */
         $localDisk = \Illuminate\Support\Facades\Storage::disk('local');
-
         /** @var \Illuminate\Filesystem\FilesystemAdapter $publicDisk */
         $publicDisk = \Illuminate\Support\Facades\Storage::disk('public');
 
-        // Fetch the file securely from the private disk
         if (!$localDisk->exists($attachment->file_path)) {
-
-            // Fallback just in case you are testing with your older 'public' files
             if ($publicDisk->exists($attachment->file_path)) {
-                // Use ->response() instead of ->download() for inline preview
                 return $publicDisk->response($attachment->file_path);
             }
-
             abort(404, 'File not found on the server.');
         }
 
-        // Use ->response() instead of ->download() for inline preview
         return $localDisk->response($attachment->file_path);
     }
 }
