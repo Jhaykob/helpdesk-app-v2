@@ -1,7 +1,7 @@
 <x-app-layout>
     @php
         $isClosed = $ticket->status === 'Closed';
-        $isAdmin = Auth::user()->role->name === 'admin';
+        $isAdmin = Auth::user()->hasRole('admin');
         $isReadOnly = $isClosed && !$isAdmin;
     @endphp
 
@@ -71,7 +71,7 @@
                     </div>
                 </div>
 
-                <div>
+                <div id="csat-box">
                     @if(in_array($ticket->status, ['Resolved', 'Closed']) && !$ticket->rating && Auth::id() === $ticket->user_id)
                         <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-6 shadow-sm" x-data="{ rating: 0, hoverRating: 0 }">
                             <h3 class="text-lg font-bold text-yellow-800 mb-2">How did we do?</h3>
@@ -136,12 +136,12 @@
 
                     <div class="p-6 space-y-6">
                         @forelse($ticket->comments as $comment)
-                            @if($comment->is_internal && Auth::user()->role->name === 'user')
+                            @if($comment->is_internal && Auth::user()->hasRole('user'))
                                 @continue
                             @endif
 
                             <div class="flex gap-4 {{ $comment->user_id === Auth::id() ? 'flex-row-reverse' : '' }}">
-                                <div class="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center font-bold text-white text-xs {{ $comment->user->role->name === 'admin' ? 'bg-red-600' : ($comment->user->role->name === 'agent' ? 'bg-blue-600' : 'bg-gray-500') }}">
+                                <div class="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center font-bold text-white text-xs {{ $comment->user->hasRole('admin') ? 'bg-red-600' : ($comment->user->hasRole('agent') ? 'bg-blue-600' : 'bg-gray-500') }}">
                                     {{ substr($comment->user->name, 0, 1) }}
                                 </div>
                                 <div class="flex max-w-2xl flex-col {{ $comment->user_id === Auth::id() ? 'items-end' : 'items-start' }}">
@@ -187,32 +187,46 @@
                             <p class="text-sm text-gray-500">This ticket is closed. New replies have been disabled.</p>
                         </div>
                     @else
-                        <div class="p-6 bg-gray-50 border-t border-gray-200">
+                        <div class="p-6 bg-gray-50 border-t border-gray-200" x-data="{ replyContent: '' }">
                             <form method="POST" action="{{ route('comments.store', $ticket) }}" enctype="multipart/form-data">
                                 @csrf
 
-                                @if(Auth::user()->role->name === 'admin' || Auth::user()->role->name === 'agent')
-                                    <div class="mb-3 flex items-center bg-yellow-50 border border-yellow-200 p-2 rounded-md w-max">
-                                        <input type="checkbox" name="is_internal" id="is_internal" value="1" class="rounded border-gray-300 text-yellow-600 shadow-sm focus:ring-yellow-500 cursor-pointer">
-                                        <label for="is_internal" class="ml-2 text-xs font-bold text-yellow-800 cursor-pointer flex items-center gap-1">
-                                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"></path></svg>
-                                            Mark as Internal Note
-                                        </label>
+                                @if(Auth::user()->hasRole('admin') || Auth::user()->hasRole('agent'))
+                                    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-4">
+
+                                        <div class="flex items-center bg-yellow-50 border border-yellow-200 p-2 rounded-md w-max">
+                                            <input type="checkbox" name="is_internal" id="is_internal" value="1" class="rounded border-gray-300 text-yellow-600 shadow-sm focus:ring-yellow-500 cursor-pointer">
+                                            <label for="is_internal" class="ml-2 text-xs font-bold text-yellow-800 cursor-pointer flex items-center gap-1">
+                                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"></path></svg>
+                                                Mark as Internal Note
+                                            </label>
+                                        </div>
+
+                                        <div class="w-full sm:w-1/2 lg:w-1/3">
+                                            <label for="macro_select" class="sr-only">Insert Canned Response</label>
+                                            <select id="macro_select"
+                                                    @change="replyContent = $event.target.value ? (replyContent ? replyContent + '\n\n' : '') + $event.target.value : replyContent; $event.target.value = ''"
+                                                    class="block w-full rounded-md border-gray-300 shadow-sm focus:border-red-500 focus:ring-red-500 sm:text-sm text-gray-600 bg-white">
+                                                <option value="">⚡ Insert Canned Response...</option>
+                                                @foreach($macros as $macro)
+                                                    <option value="{{ $macro->content }}">{{ $macro->title }} {{ $macro->is_global ? '(Global)' : '(Personal)' }}</option>
+                                                @endforeach
+                                            </select>
+                                        </div>
                                     </div>
                                 @endif
 
                                 <div>
                                     <label for="content" class="sr-only">Add a comment</label>
-                                    <textarea id="content" name="content" rows="3" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-red-500 focus:ring-red-500 sm:text-sm" placeholder="Type your reply here..." required></textarea>
+                                    <textarea id="content" name="content" x-model="replyContent" rows="4" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-red-500 focus:ring-red-500 sm:text-sm" placeholder="Type your reply here..." required></textarea>
                                 </div>
 
                                 <div class="mt-3 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                                    <div class="w-full sm:w-auto">
-                                        <input type="file" name="attachment" id="attachment" class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-gray-200 file:text-gray-700 hover:file:bg-gray-300 transition cursor-pointer" accept=".jpg,.jpeg,.png,.pdf,.doc,.docx">
-                                        <p class="mt-1 text-[10px] text-gray-400">Max size: 2MB (JPG, PNG, PDF, DOCX)</p>
+                                    <div class="w-full sm:w-auto border border-dashed border-gray-300 p-2 rounded-md bg-white">
+                                        <input type="file" name="attachment" id="attachment" class="block w-full text-sm text-gray-500 file:mr-4 file:py-1 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-gray-100 file:text-gray-700 hover:file:bg-gray-200 transition cursor-pointer" accept=".jpg,.jpeg,.png,.pdf,.doc,.docx">
                                     </div>
 
-                                    <button type="submit" class="inline-flex items-center px-4 py-2 bg-gray-800 border border-transparent rounded-md font-semibold text-xs text-white uppercase tracking-widest hover:bg-gray-700 transition w-full sm:w-auto justify-center">
+                                    <button type="submit" class="inline-flex items-center px-6 py-2.5 bg-gray-900 border border-transparent rounded-md font-bold text-xs text-white uppercase tracking-widest hover:bg-black focus:ring-2 focus:ring-offset-2 focus:ring-gray-900 transition w-full sm:w-auto justify-center shadow-sm">
                                         Send Reply
                                     </button>
                                 </div>
@@ -267,7 +281,7 @@
                     </div>
                 </div>
 
-                @if(Auth::user()->role->name === 'admin' || Auth::user()->role->name === 'agent')
+                @if(Auth::user()->hasRole('admin') || Auth::user()->hasRole('agent'))
                     <div class="bg-gray-50 shadow-sm sm:rounded-lg border border-gray-200 p-6 relative"
                          x-data="{
                             showToast: false,
@@ -279,18 +293,14 @@
                                 assigned_to: '{{ $ticket->assigned_to }}'
                             },
                             confirmAndUpdate(field, event) {
-                                // Get the human-readable text of what they selected
                                 let selectedText = event.target.options[event.target.selectedIndex].text;
                                 let friendlyField = field.replace('_', ' ').toUpperCase();
 
-                                // 1. Fire the native confirmation prompt
                                 if (!confirm(`Are you sure you want to change the ${friendlyField} to '${selectedText}'?`)) {
-                                    // 2. If they hit cancel, revert the dropdown back to what it was
                                     event.target.value = this.oldValues[field];
                                     return;
                                 }
 
-                                // 3. If they hit OK, update our 'old values' tracker and run the AJAX fetch
                                 this.oldValues[field] = event.target.value;
                                 this.updateTicket(field, event.target.value);
                             },
@@ -311,22 +321,20 @@
                                     body: formData
                                 })
                                 .then(response => {
-                                    if (!response.ok) throw new Error('Update failed or forbidden.');
+                                    if (!response.ok) throw new Error('Update failed.');
                                     return response.json();
                                 })
                                 .then(data => {
                                     this.toastMessage = data.message || 'Saved successfully!';
                                     this.showToast = true;
 
-                                    // Hide toast after 2 seconds, then refresh timeline
                                     setTimeout(() => {
                                         this.showToast = false;
                                         setTimeout(() => window.location.reload(), 300);
                                     }, 2000);
                                 })
                                 .catch(error => {
-                                    alert('Error: You do not have permission, or the system failed to save.');
-                                    // Revert the value if the backend rejected it
+                                    alert('Error saving data.');
                                     window.location.reload();
                                 })
                                 .finally(() => {
@@ -399,33 +407,73 @@
                     </div>
                 @endif
 
-                @if(isset($activities) && $activities->count() > 0)
                 <div class="bg-white shadow-sm sm:rounded-lg border border-gray-200 p-6">
-                    <h3 class="font-bold text-gray-900 border-b pb-4 mb-4 text-sm uppercase tracking-wider flex items-center gap-2">
-                        <svg class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                        Activity Timeline
+                    <h3 class="font-bold text-gray-900 border-b pb-4 mb-6 text-sm uppercase tracking-wider flex items-center gap-2">
+                        <svg class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                        Ticket Lifecycle
                     </h3>
 
-                    <div class="relative border-l border-gray-200 ml-3 space-y-6">
-                        @foreach($activities as $activity)
-                            <div class="mb-4 ml-6 relative">
-                                <span class="absolute flex items-center justify-center w-6 h-6 bg-red-100 rounded-full -left-9 ring-4 ring-white">
-                                    <svg class="w-3 h-3 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
-                                </span>
-                                <h4 class="mb-1 text-sm font-semibold text-gray-900">{{ $activity->action }}</h4>
-                                @if($activity->new_value && $activity->old_value)
-                                    <p class="text-xs text-gray-500 mb-1">Changed from <strong>{{ $activity->old_value }}</strong> to <strong>{{ $activity->new_value }}</strong></p>
+                    @php
+                        $isAssigned = !is_null($ticket->assigned_to);
+                        $isInProgress = in_array($ticket->status, ['Pending Technician', 'Pending Customer', 'Resolved', 'Closed']);
+                        $isResolved = in_array($ticket->status, ['Resolved', 'Closed']);
+                    @endphp
+
+                    <ul class="relative border-l-2 border-gray-100 ml-3 space-y-8">
+
+                        <li class="relative ml-8">
+                            <span class="absolute flex items-center justify-center w-8 h-8 bg-green-500 rounded-full -left-12 ring-4 ring-white">
+                                <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"></path></svg>
+                            </span>
+                            <h4 class="text-sm font-bold text-gray-900">Ticket Submitted</h4>
+                            <p class="text-xs text-gray-500 mt-0.5">{{ $ticket->created_at->format('M d, Y g:i A') }}</p>
+                        </li>
+
+                        <li class="relative ml-8">
+                            <span class="absolute flex items-center justify-center w-8 h-8 {{ $isAssigned ? 'bg-green-500' : 'bg-gray-200' }} rounded-full -left-12 ring-4 ring-white transition-colors duration-300">
+                                @if($isAssigned)
+                                    <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"></path></svg>
+                                @else
+                                    <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
                                 @endif
-                                <div class="flex items-center text-xs text-gray-400 gap-2 mt-1">
-                                    <span>By {{ $activity->user ? $activity->user->name : 'System' }}</span>
-                                    <span>&bull;</span>
-                                    <time>{{ $activity->created_at->format('M d, H:i') }}</time>
-                                </div>
-                            </div>
-                        @endforeach
-                    </div>
+                            </span>
+                            <h4 class="text-sm font-bold {{ $isAssigned ? 'text-gray-900' : 'text-gray-400' }}">Agent Assigned</h4>
+                            @if($isAssigned)
+                                <p class="text-xs text-gray-500 mt-0.5">Assigned to {{ $ticket->assignedTo->name }}</p>
+                            @else
+                                <p class="text-xs text-gray-400 mt-0.5 italic">Awaiting assignment</p>
+                            @endif
+                        </li>
+
+                        <li class="relative ml-8">
+                            <span class="absolute flex items-center justify-center w-8 h-8 {{ $isInProgress ? 'bg-green-500' : 'bg-gray-200' }} rounded-full -left-12 ring-4 ring-white transition-colors duration-300">
+                                @if($isInProgress)
+                                    <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"></path></svg>
+                                @else
+                                    <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"></path></svg>
+                                @endif
+                            </span>
+                            <h4 class="text-sm font-bold {{ $isInProgress ? 'text-gray-900' : 'text-gray-400' }}">Work in Progress</h4>
+                            @if($isInProgress && !$isResolved)
+                                <span class="inline-block mt-1 px-2 py-0.5 bg-blue-100 text-blue-800 text-[10px] font-bold rounded uppercase tracking-wider animate-pulse">Active</span>
+                            @endif
+                        </li>
+
+                        <li class="relative ml-8">
+                            <span class="absolute flex items-center justify-center w-8 h-8 {{ $isResolved ? 'bg-green-500' : 'bg-gray-200' }} rounded-full -left-12 ring-4 ring-white transition-colors duration-300">
+                                @if($isResolved)
+                                    <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"></path></svg>
+                                @else
+                                    <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path></svg>
+                                @endif
+                            </span>
+                            <h4 class="text-sm font-bold {{ $isResolved ? 'text-gray-900' : 'text-gray-400' }}">Resolved</h4>
+                            @if($isResolved)
+                                <p class="text-xs text-green-600 font-bold mt-0.5">Solution Provided</p>
+                            @endif
+                        </li>
+                    </ul>
                 </div>
-                @endif
 
             </div>
         </div>

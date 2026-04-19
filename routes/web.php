@@ -34,11 +34,15 @@ Route::middleware(['auth', CheckActiveUser::class])->group(function () {
     // <-- ADD THIS LINE FOR CSAT -->
     Route::post('/tickets/{ticket}/rate', [TicketController::class, 'submitRating'])->name('tickets.rate');
 
-    // Users
-    Route::post('/users', [UserController::class, 'store'])->name('users.store');
-    Route::get('/users', [UserController::class, 'index'])->name('users.index');
-    Route::patch('/users/{user}/role', [UserController::class, 'updateRole'])->name('users.updateRole');
-    Route::patch('/users/{user}/toggle-status', [UserController::class, 'toggleStatus'])->name('users.toggleStatus');
+    // Email Resolution Action Links
+    Route::get('/tickets/{ticket}/confirm-resolution', [TicketController::class, 'confirmResolution'])->name('tickets.confirmResolution');
+    Route::get('/tickets/{ticket}/reject-resolution', [TicketController::class, 'rejectResolution'])->name('tickets.rejectResolution');
+
+    // User Management Routes
+    Route::get('/users', [\App\Http\Controllers\UserController::class, 'index'])->name('users.index');
+    Route::post('/users', [\App\Http\Controllers\UserController::class, 'store'])->name('users.store');
+    Route::patch('/users/{user}', [\App\Http\Controllers\UserController::class, 'update'])->name('users.update');
+    Route::delete('/users/{user}', [\App\Http\Controllers\UserController::class, 'destroy'])->name('users.destroy');
 
     // Notifications & Audit Logs
     Route::post('/notifications/mark-read', function () {
@@ -48,12 +52,19 @@ Route::middleware(['auth', CheckActiveUser::class])->group(function () {
 
     Route::get('/audit-logs', [AuditLogController::class, 'index'])->name('audit-logs.index');
 
-    // Knowledge Base API
-    Route::get('/kb/search', [KnowledgeBaseController::class, 'search'])->name('kb.search');
+    // Knowledge Base CMS
+    Route::resource('articles', \App\Http\Controllers\ArticleController::class)->except(['show']);
+
+    // Public Knowledge Base Portal
+    Route::get('/kb', [KnowledgeBaseController::class, 'index'])->name('kb.index');
+    Route::get('/kb/{article}', [KnowledgeBaseController::class, 'show'])->name('kb.show');
 
     // System Settings
     Route::get('/settings', [\App\Http\Controllers\SettingsController::class, 'index'])->name('settings.index');
     Route::post('/settings', [\App\Http\Controllers\SettingsController::class, 'update'])->name('settings.update');
+
+    // Macro / Canned Responses Management
+    Route::resource('macros', \App\Http\Controllers\MacroController::class)->except(['create', 'show', 'edit']);
 });
 
 require __DIR__ . '/auth.php';

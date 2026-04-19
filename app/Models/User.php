@@ -2,22 +2,19 @@
 
 namespace App\Models;
 
-// use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\Relations\HasMany;
+use Spatie\Permission\Traits\HasRoles; // Spatie Trait
 
 class User extends Authenticatable
 {
-    use HasFactory, Notifiable;
+    use HasFactory, Notifiable, HasRoles; // Removed SoftDeletes from here
 
     protected $fillable = [
         'name',
         'email',
         'password',
-        'role_id',
         'is_active',
     ];
 
@@ -35,19 +32,20 @@ class User extends Authenticatable
         ];
     }
 
-    // Relationships
-    public function role(): BelongsTo
-    {
-        return $this->belongsTo(Role::class);
-    }
-
-    public function tickets(): HasMany
+    public function tickets()
     {
         return $this->hasMany(Ticket::class);
     }
 
-    public function comments(): HasMany
+    public function assignedTickets()
     {
-        return $this->hasMany(Comment::class);
+        return $this->hasMany(Ticket::class, 'assigned_to');
+    }
+
+    // The Magic Accessor!
+    // This tricks your old code into thinking the old Role system still exists
+    public function getRoleAttribute()
+    {
+        return $this->roles->first() ?? (object) ['name' => 'user'];
     }
 }

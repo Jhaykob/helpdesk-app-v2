@@ -144,27 +144,24 @@ class TicketController extends Controller
         // Maintained your original eager loading
         $ticket->load(['comments.user', 'user', 'assignedTo', 'activities.user']);
 
-        // Maintained your Macros fetch
-        $macros = \App\Models\Macro::all();
+        // NEW: Fetch only Global macros, OR the user's personal macros
+        // NEW: Fetch only Global macros, OR the user's personal macros
+        /** @var \App\Models\User $user */
+        $user = Auth::user();
+        $macros = \App\Models\Macro::where('is_global', true)
+            ->orWhere('user_id', $user->id)
+            ->orderBy('title')
+            ->get();
 
         // NEW: Fetch agents for the "Assign To" dropdown in the sidebar
         $agents = [];
-        if (Auth::user()->role->name === 'admin' || Auth::user()->role->name === 'agent') {
-            $agents = \App\Models\User::whereHas('role', function ($q) {
-                $q->whereIn('name', ['admin', 'agent']);
-            })->get();
+        if ($user->hasRole('admin') || $user->hasRole('agent')) {
+            // SPATIE FIX: Use Spatie's elegant role() scope instead of whereHas!
+            $agents = \App\Models\User::role(['admin', 'agent'])->get();
         }
 
-        // NEW: Fetch the timeline activities explicitly (ordered by latest)
-        // We use the Global AuditLog model we built earlier.
-        $activities = \App\Models\AuditLog::with('user')
-            ->where('target_type', 'Ticket')
-            ->where('target_id', $ticket->id)
-            ->latest()
-            ->get();
-
         // Pass everything the updated view requires
-        return view('tickets.show', compact('ticket', 'macros', 'agents', 'activities'));
+        return view('tickets.show', compact('ticket', 'macros', 'agents'));
     }
 
     public function update(Request $request, Ticket $ticket)
@@ -240,6 +237,15 @@ class TicketController extends Controller
                         ]);
                     }
                 }
+
+                // NEW: Resolution Email Trigger
+                // If the status is changing TO Resolved...
+                if ($key === 'status' && $newValue === 'Resolved' && $oldValue !== 'Resolved') {
+                    // Check if Global Settings allow emails to be sent
+                    if (\App\Models\Setting::get('send_email_notifications', '1') == '1') {
+                        $ticket->user->notify(new \App\Notifications\TicketResolvedNotification($ticket));
+                    }
+                }
             }
         }
 
@@ -302,5 +308,49 @@ class TicketController extends Controller
         ]);
 
         return back()->with('success', 'Thank you for your feedback!');
+    }
+
+    public function confirmResolution(Ticket $ticket)
+    {
+        // Security: Only the ticket owner can do this
+        if (Auth::id() !== $ticket->user_id) {
+            abort(403, 'Unauthorized action.');
+        }
+
+        // Redirect them to the ticket page, but append a special anchor
+        // to jump them straight down to the rating box!
+        return redirect()->route('tickets.show', $ticket)->with('success', 'Please rate your experience below!');
+    }
+
+    public function rejectResolution(Ticket $ticket)
+    {
+        // Security: Only the ticket owner can do this
+        if (Auth::id() !== $ticket->user_id) {
+            abort(403, 'Unauthorized action.');
+        }
+
+        // Only process this if it's actually in a Resolved state
+        if ($ticket->status === 'Resolved') {
+            $ticket->update(['status' => 'Open']);
+
+            // 1. Log it in the Global Audit Trail
+            \App\Models\AuditLog::create([
+                'user_id' => Auth::id(),
+                'action' => 'Rejected Resolution',
+                'target_type' => 'Ticket',
+                'target_id' => $ticket->id,
+                'old_value' => 'Resolved',
+                'new_value' => 'Open (Reopened via Email)',
+            ]);
+
+            // 2. Alert the Assigned Technician!
+            if ($ticket->assignedTo) {
+                $ticket->assignedTo->notify(new \App\Notifications\TicketReopenedNotification($ticket));
+            }
+
+            return redirect()->route('tickets.show', $ticket)->with('error', 'Ticket reopened. We have alerted the technician that you still need help.');
+        }
+
+        return redirect()->route('tickets.show', $ticket);
     }
 }

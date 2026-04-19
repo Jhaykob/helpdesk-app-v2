@@ -3,136 +3,132 @@
 namespace App\Http\Controllers;
 
 use App\Models\User;
-use App\Models\Role;
-use App\Models\AuditLog;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Validation\Rule;
+use Spatie\Permission\Models\Role;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Hash; // <-- ADDED FOR SECURE PASSWORDS
 
 class UserController extends Controller
 {
+    /**
+     * Helper to verify permissions and satisfy IDE type-hinting.
+     */
+    private function authorizeUserManagement(): void
+    {
+        /** @var \App\Models\User $currentUser */
+        $currentUser = Auth::user();
+
+        if (!$currentUser->hasRole('admin') && !$currentUser->can('manage_users')) {
+            abort(403, 'You do not have permission to manage users.');
+        }
+    }
+
     public function index(Request $request)
     {
-        if (Auth::user()->role->name !== 'admin') {
-            abort(403, 'Unauthorized action.');
+        $this->authorizeUserManagement();
+
+        $query = User::with('roles'); // Eager load Spatie roles
+
+        if ($request->filled('search')) {
+            $search = $request->search;
+            $query->where(function ($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                    ->orWhere('email', 'like', "%{$search}%");
+            });
         }
 
-        $search = $request->input('search');
-        $roleFilter = $request->input('role');
-        $statusFilter = $request->input('status');
-
-        $users = User::with('role')
-            ->when($search, function ($query, $search) {
-                // Group the search conditions so they don't break the filters
-                $query->where(function ($q) use ($search) {
-                    $q->where('name', 'like', "%{$search}%")
-                        ->orWhere('email', 'like', "%{$search}%");
-                });
-            })
-            ->when($roleFilter, function ($query, $roleFilter) {
-                $query->where('role_id', $roleFilter);
-            })
-            ->when($request->filled('status'), function ($query) use ($statusFilter) {
-                // Using filled() because '0' (Suspended) evaluates to false in standard PHP checks
-                $query->where('is_active', $statusFilter);
-            })
-            ->latest()
-            ->paginate(10)
-            ->withQueryString(); // Keeps filters active across pagination!
+        $users = $query->paginate(15)->withQueryString();
 
         $roles = Role::all();
 
-        return view('users.index', compact('users', 'roles', 'search', 'roleFilter', 'statusFilter'));
+        return view('users.index', compact('users', 'roles'));
     }
 
-    // NEW: Create User Method
     public function store(Request $request)
     {
-        if (Auth::user()->role->name !== 'admin') {
-            abort(403, 'Unauthorized action.');
-        }
+        $this->authorizeUserManagement();
 
         $validated = $request->validate([
             'name' => 'required|string|max:255',
             'email' => 'required|string|email|max:255|unique:users',
             'password' => 'required|string|min:8',
-            'role_id' => 'required|exists:roles,id',
+            'role' => 'required|exists:roles,name',
         ]);
 
         $user = User::create([
             'name' => $validated['name'],
             'email' => $validated['email'],
             'password' => Hash::make($validated['password']),
-            'role_id' => $validated['role_id'],
+            'is_active' => true,
         ]);
 
-        // WRITE TO GLOBAL AUDIT LOG
-        AuditLog::create([
+        $user->assignRole($validated['role']);
+
+        \App\Models\AuditLog::create([
             'user_id' => Auth::id(),
             'action' => 'Created User',
             'target_type' => 'User',
             'target_id' => $user->id,
-            'new_value' => 'Role: ' . ucfirst($user->role->name),
+            'new_value' => "Created {$user->name} with role {$validated['role']}",
         ]);
 
-        return back()->with('success', "User {$user->name} has been successfully created.");
+        return back()->with('success', 'User created successfully.');
     }
 
-    public function updateRole(Request $request, User $user)
+    public function update(Request $request, User $user)
     {
-        if (Auth::user()->role->name !== 'admin') {
-            abort(403, 'Unauthorized action.');
+        $this->authorizeUserManagement();
+
+        $validated = $request->validate([
+            'name' => 'required|string|max:255',
+            'email' => ['required', 'string', 'email', 'max:255', Rule::unique('users')->ignore($user->id)],
+            'role' => 'required|exists:roles,name',
+            'is_active' => 'boolean',
+        ]);
+
+        $user->update([
+            'name' => $validated['name'],
+            'email' => $validated['email'],
+            'is_active' => $request->has('is_active'),
+        ]);
+
+        if ($request->filled('password')) {
+            $request->validate(['password' => 'min:8']);
+            $user->update(['password' => Hash::make($request->password)]);
         }
 
-        $request->validate(['role_id' => 'required|exists:roles,id']);
+        $user->syncRoles([$validated['role']]);
 
-        if ($user->id === Auth::id() && $request->role_id != $user->role_id) {
-            return back()->withErrors(['role' => 'You cannot change your own role.']);
-        }
-
-        $oldRoleName = $user->role->name;
-
-        $user->update(['role_id' => $request->role_id]);
-
-        $newRoleName = Role::find($request->role_id)->name;
-
-        // WRITE TO GLOBAL AUDIT LOG
-        AuditLog::create([
+        \App\Models\AuditLog::create([
             'user_id' => Auth::id(),
-            'action' => 'Changed User Role',
+            'action' => 'Updated User',
             'target_type' => 'User',
             'target_id' => $user->id,
-            'old_value' => ucfirst($oldRoleName),
-            'new_value' => ucfirst($newRoleName),
+            'new_value' => "Updated {$user->name} (Role: {$validated['role']})",
         ]);
 
-        return back()->with('success', "{$user->name}'s role has been updated.");
+        return back()->with('success', 'User updated successfully.');
     }
 
-    public function toggleStatus(User $user)
+    public function destroy(User $user)
     {
-        if (Auth::user()->role->name !== 'admin') {
-            abort(403, 'Unauthorized action.');
-        }
+        $this->authorizeUserManagement();
 
-        // Prevent the admin from accidentally suspending themselves
         if ($user->id === Auth::id()) {
-            return back()->withErrors(['status' => 'You cannot suspend your own admin account.']);
+            return back()->withErrors(['error' => 'You cannot delete your own account.']);
         }
 
-        // Flip the boolean
-        $user->update(['is_active' => !$user->is_active]);
-        $status = $user->is_active ? 'Reactivated' : 'Suspended';
-
-        // WRITE TO GLOBAL AUDIT LOG
-        AuditLog::create([
+        \App\Models\AuditLog::create([
             'user_id' => Auth::id(),
-            'action' => "{$status} User Account",
+            'action' => 'Deleted User',
             'target_type' => 'User',
             'target_id' => $user->id,
-            'new_value' => "Account {$status}",
+            'old_value' => $user->email,
         ]);
 
-        return back()->with('success', "User {$user->name} has been successfully {$status}.");
+        $user->delete();
+
+        return back()->with('success', 'User deleted successfully.');
     }
 }
