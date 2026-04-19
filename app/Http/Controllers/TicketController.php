@@ -288,33 +288,31 @@ class TicketController extends Controller
 
     public function submitRating(Request $request, Ticket $ticket)
     {
-        // Only the ticket creator can rate it
-        if (Auth::id() !== $ticket->user_id) {
-            abort(403, 'Only the ticket creator can leave feedback.');
-        }
-
-        // Only allow rating if resolved or closed, and not already rated
-        if (!in_array($ticket->status, ['Resolved', 'Closed']) || $ticket->rating) {
-            abort(400, 'This ticket cannot be rated at this time.');
-        }
-
-        $validated = $request->validate([
+        $request->validate([
             'rating' => 'required|integer|min:1|max:5',
-            'csat_feedback' => 'nullable|string|max:1000',
+            'csat_feedback' => 'nullable|string|max:500',
         ]);
 
-        $ticket->update($validated);
+        if (Auth::id() !== $ticket->user_id) {
+            abort(403);
+        }
 
-        // Log the CSAT score in our Audit Logs
+        // FORCE the status to 'Closed' simultaneously with saving the rating
+        $ticket->update([
+            'rating' => $request->rating,
+            'csat_feedback' => $request->csat_feedback,
+            'status' => 'Closed',
+        ]);
+
         \App\Models\AuditLog::create([
             'user_id' => Auth::id(),
-            'action' => 'Submitted CSAT Rating',
+            'action' => 'Closed Ticket via CSAT',
             'target_type' => 'Ticket',
             'target_id' => $ticket->id,
-            'new_value' => "Rated {$validated['rating']} Stars",
+            'new_value' => 'Status changed to Closed. Rating: ' . $request->rating . ' Stars',
         ]);
 
-        return back()->with('success', 'Thank you for your feedback!');
+        return back()->with('success', 'Thank you for your feedback! This ticket has now been officially closed.');
     }
 
     public function confirmResolution(Ticket $ticket)
@@ -326,7 +324,9 @@ class TicketController extends Controller
 
         // Redirect them to the ticket page, but append a special anchor
         // to jump them straight down to the rating box!
-        return redirect()->route('tickets.show', $ticket)->with('success', 'Please rate your experience below!');
+        return redirect()->route('tickets.show', $ticket)
+            ->with('success', 'Thank you for confirming!')
+            ->with('resolution_confirmed', true);
     }
 
     public function rejectResolution(Ticket $ticket)

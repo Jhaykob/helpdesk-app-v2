@@ -7,17 +7,19 @@ use App\Models\Ticket;
 use App\Models\AuditLog;
 use App\Models\User;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\Cache;
 
 class AutoCloseResolvedTickets extends Command
 {
     // The terminal command signature
-    protected $signature = 'tickets:auto-close {--days=3 : The number of days to wait}';
+    protected $signature = 'tickets:auto-close {--days= : The number of days to wait}';
 
     protected $description = 'Automatically close tickets that have been resolved for a specific number of days without user feedback.';
 
     public function handle()
     {
-        $days = $this->option('days');
+        // 1. Use the UI Cache Setting first. If empty, check the terminal option. If empty, default to 3.
+        $days = Cache::get('auto_close_days', $this->option('days') ?? 3);
         $cutoffDate = Carbon::now()->subDays($days);
 
         // Find all tickets that are Resolved, and haven't been updated in X days
@@ -30,22 +32,22 @@ class AutoCloseResolvedTickets extends Command
             return;
         }
 
-        // Grab a system admin to attribute the Audit Log to (since no human clicked a button)
-        $systemUser = User::role('admin')->first();
+        // Grab a system admin to attribute the Audit Log to
+        $systemUser = User::role('super-admin')->first() ?? User::role('admin')->first();
         $systemUserId = $systemUser ? $systemUser->id : 1;
 
         $count = 0;
         foreach ($staleTickets as $ticket) {
             $ticket->update(['status' => 'Closed']);
 
-            // Create a clear audit trail for why this happened
+            // Create a clear audit trail (Dynamically using the $days variable!)
             AuditLog::create([
                 'user_id' => $systemUserId,
                 'action' => 'Auto-Closed Ticket',
                 'target_type' => 'Ticket',
                 'target_id' => $ticket->id,
                 'old_value' => 'Resolved',
-                'new_value' => 'Closed (72-hour inactivity timeout)',
+                'new_value' => "Closed ({$days}-day inactivity timeout)",
             ]);
 
             $count++;
