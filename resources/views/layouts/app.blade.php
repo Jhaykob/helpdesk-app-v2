@@ -71,6 +71,13 @@
                         Users
                     </a>
 
+                    @can('manage_roles')
+                        <a href="{{ route('roles.index') }}" class="flex items-center px-4 py-3 rounded-lg transition-colors {{ request()->routeIs('roles.*') ? 'bg-red-900 font-bold shadow-inner' : 'hover:bg-red-600' }}">
+                            <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path></svg>
+                            Roles & Security
+                        </a>
+                    @endcan
+
                     <a href="{{ route('audit-logs.index') }}"
                         class="flex items-center px-4 py-3 rounded-lg transition-colors {{ request()->routeIs('audit-logs.*') ? 'bg-red-900 font-bold shadow-inner' : 'hover:bg-red-600' }}">
                         <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -192,26 +199,28 @@
                                 class="py-2 px-4 bg-gray-50 border-b border-gray-100 flex justify-between items-center">
                                 <span class="text-sm font-bold text-gray-700">Alerts</span>
                                 @if (Auth::user()->unreadNotifications->count() > 0)
-                                    <form method="POST" action="{{ route('notifications.read') }}">
+                                    <form method="POST" action="{{ route('notifications.markAllRead') }}">
                                         @csrf
                                         <button type="submit"
-                                            class="text-xs text-red-600 hover:text-red-800 font-medium">Mark all
+                                            class="text-xs text-red-600 hover:text-red-800 font-medium focus:outline-none">Mark all
                                             read</button>
                                     </form>
                                 @endif
                             </div>
                             <div class="max-h-60 overflow-y-auto">
                                 @forelse(Auth::user()->unreadNotifications as $notification)
-                                    <a href="{{ $notification->data['url'] }}"
+                                    <a href="{{ route('notifications.read', $notification->id) }}"
                                         class="block px-4 py-3 border-b border-gray-50 hover:bg-red-50 transition">
-                                        <p class="text-sm text-gray-800 font-medium">
-                                            {{ $notification->data['message'] }}</p>
-                                        <p class="text-xs text-gray-500 mt-1">
-                                            {{ $notification->created_at->diffForHumans() }}</p>
+                                        <p class="text-sm text-gray-800 font-bold">{{ $notification->data['title'] ?? 'Alert' }}</p>
+                                        <p class="text-xs text-gray-600 mt-0.5">{{ $notification->data['message'] }}</p>
+                                        <p class="text-[10px] text-gray-400 mt-1">{{ $notification->created_at->diffForHumans() }}</p>
                                     </a>
                                 @empty
                                     <p class="text-sm text-gray-500 px-4 py-3 text-center">No new notifications.</p>
                                 @endforelse
+                            </div>
+                            <div class="p-2 border-t border-gray-100 bg-gray-50 text-center">
+                                <a href="{{ route('notifications.index') }}" class="text-xs font-bold text-red-600 hover:text-red-800 uppercase tracking-wider block py-1">View All History</a>
                             </div>
                         </div>
                     </div>
@@ -252,27 +261,27 @@
                                 class="py-2 px-4 bg-gray-50 border-b border-gray-100 flex justify-between items-center">
                                 <span class="text-sm font-bold text-gray-700">Notifications</span>
                                 @if (Auth::user()->unreadNotifications->count() > 0)
-                                    <form method="POST" action="{{ route('notifications.read') }}">
+                                    <form method="POST" action="{{ route('notifications.markAllRead') }}">
                                         @csrf
                                         <button type="submit"
-                                            class="text-xs text-red-600 hover:text-red-800 font-medium focus:outline-none">Mark
-                                            all as read</button>
+                                            class="text-xs text-red-600 hover:text-red-800 font-medium focus:outline-none">Mark all as read</button>
                                     </form>
                                 @endif
                             </div>
                             <div class="max-h-80 overflow-y-auto">
                                 @forelse(Auth::user()->unreadNotifications as $notification)
-                                    <a href="{{ $notification->data['url'] }}"
+                                    <a href="{{ route('notifications.read', $notification->id) }}"
                                         class="block px-4 py-3 border-b border-gray-50 hover:bg-red-50 transition">
-                                        <p class="text-sm text-gray-800 font-medium">
-                                            {{ $notification->data['message'] }}</p>
-                                        <p class="text-xs text-gray-500 mt-1">
-                                            {{ $notification->created_at->diffForHumans() }}</p>
+                                        <p class="text-sm text-gray-800 font-bold">{{ $notification->data['title'] ?? 'Alert' }}</p>
+                                        <p class="text-xs text-gray-600 mt-0.5">{{ $notification->data['message'] }}</p>
+                                        <p class="text-[10px] text-gray-400 mt-1">{{ $notification->created_at->diffForHumans() }}</p>
                                     </a>
                                 @empty
-                                    <p class="text-sm text-gray-500 px-4 py-4 text-center">No new notifications right
-                                        now.</p>
+                                    <p class="text-sm text-gray-500 px-4 py-4 text-center">No new notifications right now.</p>
                                 @endforelse
+                            </div>
+                            <div class="p-2 border-t border-gray-100 bg-gray-50 text-center">
+                                <a href="{{ route('notifications.index') }}" class="text-xs font-bold text-red-600 hover:text-red-800 uppercase tracking-wider block py-1">View All History</a>
                             </div>
                         </div>
                     </div>

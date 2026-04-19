@@ -7,19 +7,18 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rule;
 use Spatie\Permission\Models\Role;
+use Spatie\Permission\Models\Permission;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Gate;
 
 class UserController extends Controller
 {
-    /**
-     * Helper to verify permissions and satisfy IDE type-hinting.
-     */
     private function authorizeUserManagement(): void
     {
         /** @var \App\Models\User $currentUser */
         $currentUser = Auth::user();
 
-        if (!$currentUser->hasRole('admin') && !$currentUser->can('manage_users')) {
+        if (!$currentUser->hasRole('super-admin') && !$currentUser->can('manage_users')) {
             abort(403, 'You do not have permission to manage users.');
         }
     }
@@ -28,7 +27,8 @@ class UserController extends Controller
     {
         $this->authorizeUserManagement();
 
-        $query = User::with('roles'); // Eager load Spatie roles
+        // Eager load Spatie roles AND direct permissions
+        $query = User::with(['roles', 'permissions']);
 
         if ($request->filled('search')) {
             $search = $request->search;
@@ -40,9 +40,10 @@ class UserController extends Controller
 
         $users = $query->paginate(15)->withQueryString();
 
-        $roles = Role::all();
+        $roles = Role::orderBy('id')->get();
+        $permissions = Permission::orderBy('name')->get();
 
-        return view('users.index', compact('users', 'roles'));
+        return view('users.index', compact('users', 'roles', 'permissions'));
     }
 
     public function store(Request $request)
@@ -54,6 +55,8 @@ class UserController extends Controller
             'email' => 'required|string|email|max:255|unique:users',
             'password' => 'required|string|min:8',
             'role' => 'required|exists:roles,name',
+            'permissions' => 'nullable|array',
+            'permissions.*' => 'exists:permissions,name',
         ]);
 
         $user = User::create([
@@ -63,7 +66,13 @@ class UserController extends Controller
             'is_active' => true,
         ]);
 
+        // 1. Assign the Base/Custom Role
         $user->assignRole($validated['role']);
+
+        // 2. Assign Direct Override Permissions (if any)
+        if (!empty($validated['permissions'])) {
+            $user->syncPermissions($validated['permissions']);
+        }
 
         \App\Models\AuditLog::create([
             'user_id' => Auth::id(),
@@ -80,11 +89,18 @@ class UserController extends Controller
     {
         $this->authorizeUserManagement();
 
+        // Prevent modifying the primary Super Admin account accidentally
+        if ($user->hasRole('super-admin') && Auth::id() !== $user->id) {
+            abort(403, 'You cannot modify the primary Super Admin account.');
+        }
+
         $validated = $request->validate([
             'name' => 'required|string|max:255',
             'email' => ['required', 'string', 'email', 'max:255', Rule::unique('users')->ignore($user->id)],
             'role' => 'required|exists:roles,name',
             'is_active' => 'boolean',
+            'permissions' => 'nullable|array',
+            'permissions.*' => 'exists:permissions,name',
         ]);
 
         $user->update([
@@ -98,7 +114,11 @@ class UserController extends Controller
             $user->update(['password' => Hash::make($request->password)]);
         }
 
+        // 1. Sync Role
         $user->syncRoles([$validated['role']]);
+
+        // 2. Sync Direct Override Permissions
+        $user->syncPermissions($validated['permissions'] ?? []);
 
         \App\Models\AuditLog::create([
             'user_id' => Auth::id(),
@@ -115,8 +135,8 @@ class UserController extends Controller
     {
         $this->authorizeUserManagement();
 
-        if ($user->id === Auth::id()) {
-            return back()->withErrors(['error' => 'You cannot delete your own account.']);
+        if ($user->id === Auth::id() || $user->hasRole('super-admin')) {
+            return back()->withErrors(['error' => 'You cannot delete yourself or a Super Admin.']);
         }
 
         \App\Models\AuditLog::create([

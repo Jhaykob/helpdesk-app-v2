@@ -17,8 +17,8 @@
                         {{ __('Tickets') }}
                     </x-nav-link>
 
-                    @if(Auth::user()->role->name === 'admin')
-                        <x-nav-link :href="route('users.index')" :active="request()->routeIs('users.*')">
+                    @if(Auth::user()->hasRole('admin') || Auth::user()->hasRole('super-admin'))
+                        <x-nav-link :href="route('users.index')" :active="request()->request->routeIs('users.*')">
                             {{ __('Users') }}
                         </x-nav-link>
 
@@ -33,7 +33,55 @@
                 </div>
             </div>
 
-            <div class="hidden sm:flex sm:items-center sm:ms-6">
+            <div class="hidden sm:flex sm:items-center sm:ms-6 gap-4">
+
+                @if(Auth::user()->hasRole('admin') || Auth::user()->hasRole('agent') || Auth::user()->hasRole('super-admin'))
+                <div class="relative" x-data="{ notificationOpen: false }" @click.outside="notificationOpen = false">
+                    <button @click="notificationOpen = !notificationOpen" class="relative p-2 text-gray-400 hover:text-gray-500 focus:outline-none transition">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"></path></svg>
+
+                        @if(Auth::user()->unreadNotifications->count() > 0)
+                            <span class="absolute top-1 right-1 flex items-center justify-center w-4 h-4 text-[10px] font-bold text-white bg-red-600 rounded-full border-2 border-white">
+                                {{ Auth::user()->unreadNotifications->count() }}
+                            </span>
+                        @endif
+                    </button>
+
+                    <div x-show="notificationOpen" x-transition style="display: none;" class="absolute right-0 mt-2 w-80 bg-white rounded-md shadow-lg border border-gray-100 z-50 overflow-hidden">
+                        <div class="p-3 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+                            <span class="text-sm font-bold text-gray-700">Notifications</span>
+                            @if(Auth::user()->unreadNotifications->count() > 0)
+                                <form action="{{ route('notifications.markAllRead') }}" method="POST">
+                                    @csrf
+                                    <button type="submit" class="text-xs text-red-600 hover:text-red-800 font-medium">Mark all read</button>
+                                </form>
+                            @endif
+                        </div>
+
+                        <div class="max-h-96 overflow-y-auto">
+                            @forelse(Auth::user()->unreadNotifications as $notification)
+                                <a href="{{ route('notifications.read', $notification->id) }}" class="block p-4 border-b border-gray-50 hover:bg-gray-50 transition {{ $loop->last ? 'border-0' : '' }}">
+                                    <div class="flex justify-between items-start mb-1">
+                                        <span class="text-xs font-bold text-gray-900">{{ $notification->data['title'] ?? 'Alert' }}</span>
+                                        <span class="text-[10px] text-gray-400">{{ $notification->created_at->diffForHumans() }}</span>
+                                    </div>
+                                    <p class="text-xs text-gray-600 truncate">{{ $notification->data['message'] ?? '' }}</p>
+                                </a>
+                            @empty
+                                <div class="p-4 text-center text-sm text-gray-500 flex flex-col items-center">
+                                    <svg class="w-8 h-8 text-gray-300 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"></path></svg>
+                                    You're all caught up!
+                                </div>
+                            @endforelse
+                        </div>
+
+                        <div class="p-2 border-t border-gray-100 bg-gray-50 text-center">
+                            <a href="{{ route('notifications.index') }}" class="text-xs font-bold text-red-600 hover:text-red-800 uppercase tracking-wider block py-1">View All History</a>
+                        </div>
+                    </div>
+                </div>
+                @endif
+
                 <x-dropdown align="right" width="48">
                     <x-slot name="trigger">
                         <button class="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-gray-500 bg-white hover:text-gray-700 focus:outline-none transition ease-in-out duration-150">
@@ -86,7 +134,7 @@
                 {{ __('Tickets') }}
             </x-responsive-nav-link>
 
-            @if(Auth::user()->role->name === 'admin')
+            @if(Auth::user()->hasRole('admin') || Auth::user()->hasRole('super-admin'))
                 <x-responsive-nav-link :href="route('users.index')" :active="request()->routeIs('users.*')">
                     {{ __('Users') }}
                 </x-responsive-nav-link>

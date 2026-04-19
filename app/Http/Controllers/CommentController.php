@@ -12,27 +12,44 @@ class CommentController extends Controller
 {
     public function store(Request $request, Ticket $ticket)
     {
-        $request->validate([
-            'content' => 'required|string',
-            'attachment' => 'nullable|file|mimes:jpg,jpeg,png,pdf,doc,docx|max:2048', // 2MB Max
-        ]);
-
         /** @var \App\Models\User $user */
         $user = Auth::user();
 
-        // 1. Handle the file attachment
-        $path = null;
-        if ($request->hasFile('attachment')) {
-            $path = $request->file('attachment')->store('comments', 'public');
+        // 1. Define who is allowed to participate in this ticket
+        $isCreator = $ticket->user_id === $user->id;
+        $isAssignee = $ticket->assigned_to === $user->id;
+        $isAdmin = $user->hasRole('admin') || $user->hasRole('super-admin');
+        $isCollaborator = $ticket->collaborators->contains($user->id);
+
+        // 2. The Bouncer: Kick them out if they don't have clearance
+        if (!$isCreator && !$isAssignee && !$isAdmin && !$isCollaborator) {
+            abort(403, 'You are strictly viewing this ticket in Read-Only mode and cannot leave comments.');
         }
 
-        // 2. Handle the Internal Note flag securely
+        // 3. Prevent comments if the ticket is permanently Closed
+        if ($ticket->status === 'Closed' && !$isAdmin) {
+            return back()->withErrors(['error' => 'This ticket is closed. Further comments are disabled.']);
+        }
+
+        $request->validate([
+            'content' => 'required|string',
+            'attachment' => 'nullable|file|mimes:jpg,jpeg,png,pdf,doc,docx|max:2048', // 2MB Max
+            'is_internal' => 'nullable|boolean'
+        ]);
+
+        // 4. Handle the file attachment securely
+        $path = null;
+        if ($request->hasFile('attachment')) {
+            $path = $request->file('attachment')->store('comments', 'local');
+        }
+
+        // 5. Handle the Internal Note flag securely
         $isInternal = false;
         if ($user->hasRole('admin') || $user->hasRole('agent')) {
             $isInternal = $request->has('is_internal');
         }
 
-        // 3. Save the comment
+        // 6. Save the comment
         $ticket->comments()->create([
             'content' => $request->content,
             'user_id' => $user->id,
@@ -40,7 +57,7 @@ class CommentController extends Controller
             'is_internal' => $isInternal,
         ]);
 
-        // 4. THE PING-PONG AUTOMATION
+        // 7. THE PING-PONG AUTOMATION
         $oldStatus = $ticket->status;
         $newStatus = $oldStatus;
 
@@ -69,7 +86,7 @@ class CommentController extends Controller
             ]);
         }
 
-        // 5. Global Audit Log for the comment itself
+        // 8. Global Audit Log for the comment itself
         AuditLog::create([
             'user_id' => $user->id,
             'action' => $isInternal ? 'Added Internal Note' : 'Added Public Reply',

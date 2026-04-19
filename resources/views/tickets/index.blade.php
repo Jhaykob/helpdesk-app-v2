@@ -12,25 +12,7 @@
     </x-slot>
 
     <div class="py-12 bg-gray-50 min-h-screen"
-         x-data="{
-             isModalOpen: false,
-             searchQuery: '',
-             suggestions: [],
-             isSearching: false,
-             searchKB() {
-                 if (this.searchQuery.length < 3) {
-                     this.suggestions = [];
-                     return;
-                 }
-                 this.isSearching = true;
-                 fetch(`/kb/search?q=${encodeURIComponent(this.searchQuery)}`)
-                     .then(res => res.json())
-                     .then(data => {
-                         this.suggestions = data;
-                         this.isSearching = false;
-                     });
-             }
-         }"
+         x-data="{ isModalOpen: false }"
          @open-modal.window="isModalOpen = true">
 
         <div class="max-w-7xl mx-auto sm:px-6 lg:px-8">
@@ -95,7 +77,7 @@
                                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Title</th>
                                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
                                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Priority / SLA</th>
-                                @if(Auth::user()->role->name === 'admin' || Auth::user()->role->name === 'agent')
+                                @if(Auth::user()->hasRole('admin') || Auth::user()->hasRole('agent'))
                                     <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Creator</th>
                                     <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Assigned To</th>
                                 @endif
@@ -136,7 +118,7 @@
                                             @endif
                                         </div>
                                     </td>
-                                    @if(Auth::user()->role->name === 'admin' || Auth::user()->role->name === 'agent')
+                                    @if(Auth::user()->hasRole('admin') || Auth::user()->hasRole('agent'))
                                         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{{ $ticket->user->name }}</td>
                                         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                                             @if($ticket->assignedTo)
@@ -193,31 +175,24 @@
 
                             <div class="mb-4">
                                 <label for="title" class="block text-sm font-medium text-gray-700">Ticket Title (Brief summary of your issue)</label>
-                                <input type="text" name="title" id="title" x-model="searchQuery" x-on:input.debounce.500ms="searchKB" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-red-500 focus:ring-red-500" placeholder="e.g., I cannot connect to the printer" required>
-                            </div>
-
-                            <div x-show="suggestions.length > 0" x-transition style="display: none;" class="mb-6 bg-blue-50 border border-blue-200 rounded-lg p-4 shadow-inner relative">
-                                <div x-show="isSearching" class="absolute inset-0 bg-blue-50 bg-opacity-50 flex items-center justify-center rounded-lg">
-                                    <svg class="animate-spin h-5 w-5 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                                </div>
-
-                                <h4 class="text-sm font-bold text-blue-900 mb-2 flex items-center">
-                                    <svg class="w-5 h-5 mr-1 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                                    Suggested Solutions (Might fix your issue instantly!)
-                                </h4>
-                                <ul class="space-y-3">
-                                    <template x-for="article in suggestions" :key="article.id">
-                                        <li class="bg-white p-3 rounded border border-blue-100 shadow-sm">
-                                            <strong class="text-sm text-blue-800 block mb-1" x-text="article.title"></strong>
-                                            <p class="text-xs text-gray-600 line-clamp-2" x-text="article.content"></p>
-                                        </li>
-                                    </template>
-                                </ul>
+                                <input type="text" name="title" id="title" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-red-500 focus:ring-red-500" placeholder="e.g., I cannot connect to the printer" required>
                             </div>
 
                             <div class="mb-4">
                                 <label for="description" class="block text-sm font-medium text-gray-700">Detailed Description</label>
                                 <textarea name="description" id="description" rows="4" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-red-500 focus:ring-red-500" required></textarea>
+                            </div>
+
+                            <div class="mb-4">
+                                <label for="category_id" class="block text-sm font-medium text-gray-700">Category</label>
+                                <select name="category_id" id="category_id" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-red-500 focus:ring-red-500">
+                                    <option value="" disabled selected>Select a category...</option>
+                                    <option value="1">Hardware / Devices</option>
+                                    <option value="2">Software / Applications</option>
+                                    <option value="3">Network / Internet</option>
+                                    <option value="4">Account / Access</option>
+                                    <option value="5">Other / General Inquiry</option>
+                                </select>
                             </div>
 
                             <div class="mb-4">

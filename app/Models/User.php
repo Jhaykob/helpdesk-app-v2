@@ -48,4 +48,9 @@ class User extends Authenticatable
     {
         return $this->roles->first() ?? (object) ['name' => 'user'];
     }
+
+    public function collaboratedTickets()
+    {
+        return $this->belongsToMany(Ticket::class, 'ticket_collaborators')->withTimestamps();
+    }
 }

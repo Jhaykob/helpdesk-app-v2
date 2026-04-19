@@ -73,4 +73,10 @@ class Ticket extends Model
         // Return true if the current time is past the deadline
         return now()->greaterThan($this->slaDeadline);
     }
+
+    // The agents who have been invited to collaborate on this ticket
+    public function collaborators()
+    {
+        return $this->belongsToMany(User::class, 'ticket_collaborators')->withTimestamps();
+    }
 }

@@ -12,46 +12,41 @@ use Illuminate\Support\Facades\Gate;
 
 class TicketController extends Controller
 {
-    public function index(Request $request) // <-- Add Request $request
+    public function index(Request $request)
     {
+        /** @var \App\Models\User $user */
         $user = Auth::user();
-        $search = $request->input('search');
-        $statusFilter = $request->input('status');
-        $priorityFilter = $request->input('priority');
 
-        // 1. Base Query with Eager Loading
+        // Start the query and eager load relationships for performance
         $query = Ticket::with(['user', 'assignedTo']);
 
-        // 2. Enforce Role-Based Access Control (RBAC)
-        if ($user->role->name === 'admin') {
-            // Admins see everything
-        } elseif ($user->role->name === 'agent') {
-            $query->where(function ($q) use ($user) {
-                $q->where('status', 'Unassigned')
-                    ->orWhere('assigned_to', $user->id);
-            });
-        } else {
-            // Regular users only see their own
+        // SECURITY: If they are NOT an admin and NOT an agent, restrict to only their own tickets
+        if (!$user->hasRole('admin') && !$user->hasRole('agent') && !$user->hasRole('super-admin')) {
             $query->where('user_id', $user->id);
         }
+        // If they ARE an admin or agent, the block above is skipped, granting them global access!
 
-        // 3. Apply Search and Filters
-        $tickets = $query
-            ->when($search, function ($q, $search) {
-                $q->where(function ($subQ) use ($search) {
-                    $subQ->where('title', 'like', "%{$search}%")
-                        ->orWhere('id', 'like', "%{$search}%");
-                });
-            })
-            ->when($statusFilter, function ($q, $statusFilter) {
-                $q->where('status', $statusFilter);
-            })
-            ->when($priorityFilter, function ($q, $priorityFilter) {
-                $q->where('priority', $priorityFilter);
-            })
-            ->latest()
-            ->paginate(10) // 4. Paginate!
-            ->withQueryString();
+        // Apply Search Filter
+        if ($request->filled('search')) {
+            $searchTerm = $request->search;
+            $query->where(function ($q) use ($searchTerm) {
+                $q->where('id', 'like', "%{$searchTerm}%")
+                    ->orWhere('title', 'like', "%{$searchTerm}%");
+            });
+        }
+
+        // Apply Status Filter
+        if ($request->filled('status')) {
+            $query->where('status', $request->status);
+        }
+
+        // Apply Priority Filter
+        if ($request->filled('priority')) {
+            $query->where('priority', $request->priority);
+        }
+
+        // Fetch the results, paginated
+        $tickets = $query->latest()->paginate(10)->withQueryString();
 
         return view('tickets.index', compact('tickets'));
     }
@@ -61,28 +56,33 @@ class TicketController extends Controller
         $validated = $request->validate([
             'title' => 'required|string|max:255',
             'description' => 'required|string',
+            'category_id' => 'required|integer', // Added to support your UI dropdown
             'priority' => 'required|in:Low,Medium,High',
             'attachment' => 'nullable|file|mimes:jpg,jpeg,png,pdf,doc,docx|max:2048',
         ]);
 
+        /** @var \App\Models\User $user */
+        $user = Auth::user();
+
         $ticket = Ticket::create([
             'title' => $validated['title'],
             'description' => $validated['description'],
+            'category_id' => $validated['category_id'],
             'priority' => $validated['priority'],
             'status' => 'Unassigned',
-            'user_id' => Auth::id(),
+            'user_id' => $user->id,
         ]);
 
         // LOCAL LOGGING: Ticket History
         TicketActivity::create([
             'ticket_id' => $ticket->id,
-            'user_id' => Auth::id(),
+            'user_id' => $user->id,
             'action' => 'created the ticket',
         ]);
 
         // GLOBAL LOGGING: Enterprise Audit Trail
         AuditLog::create([
-            'user_id' => Auth::id(),
+            'user_id' => $user->id,
             'action' => 'Created Ticket',
             'target_type' => 'Ticket',
             'target_id' => $ticket->id,
@@ -92,7 +92,9 @@ class TicketController extends Controller
         if ($request->hasFile('attachment')) {
             $file = $request->file('attachment');
             $fileName = time() . '_' . $file->getClientOriginalName();
-            $filePath = $file->storeAs('attachments', $fileName, 'public');
+
+            // SECURITY UPDATE: Save to the private 'local' disk instead of 'public'
+            $filePath = $file->storeAs('attachments', $fileName, 'local');
 
             $ticket->attachments()->create([
                 'file_name' => $fileName,
@@ -100,39 +102,44 @@ class TicketController extends Controller
             ]);
         }
 
+        // NEW: Alert all Admins and Agents about the new unassigned ticket
+        $staffMembers = \App\Models\User::role(['admin', 'agent', 'super-admin'])->get();
+        \Illuminate\Support\Facades\Notification::send($staffMembers, new \App\Notifications\NewTicketNotification($ticket));
+
         return redirect()->route('tickets.index')->with('success', 'Ticket created successfully.');
     }
 
-    public function claim(Ticket $ticket)
+    public function claim(Request $request, Ticket $ticket)
     {
-        if (Gate::denies('claim', $ticket)) {
+        /** @var \App\Models\User $user */
+        $user = Auth::user();
+
+        // Security: Must be an admin or agent
+        if (!$user->hasRole('admin') && !$user->hasRole('agent')) {
             abort(403, 'Unauthorized action.');
         }
 
+        // Prevent claiming if already assigned
+        if (!is_null($ticket->assigned_to)) {
+            return back()->withErrors(['error' => 'This ticket has already been claimed by another agent.']);
+        }
+
         $ticket->update([
-            'assigned_to' => Auth::id(),
+            'assigned_to' => $user->id,
             'status' => 'Open',
         ]);
 
-        // LOCAL LOGGING: Ticket History
-        TicketActivity::create([
-            'ticket_id' => $ticket->id,
-            'user_id' => Auth::id(),
-            'action' => 'claimed the ticket',
-            'new_value' => 'Open',
-        ]);
-
-        // GLOBAL LOGGING: Enterprise Audit Trail
-        AuditLog::create([
-            'user_id' => Auth::id(),
+        // Log the action securely
+        \App\Models\AuditLog::create([
+            'user_id' => $user->id,
             'action' => 'Claimed Ticket',
             'target_type' => 'Ticket',
             'target_id' => $ticket->id,
             'old_value' => 'Unassigned',
-            'new_value' => 'Open',
+            'new_value' => 'Open (Claimed by ' . $user->name . ')',
         ]);
 
-        return redirect()->route('tickets.show', $ticket)->with('success', 'You have successfully claimed this ticket.');
+        return back()->with('success', 'You have successfully claimed this ticket.');
     }
 
     public function show(Ticket $ticket)
@@ -352,5 +359,86 @@ class TicketController extends Controller
         }
 
         return redirect()->route('tickets.show', $ticket);
+    }
+
+    public function addCollaborator(Request $request, Ticket $ticket)
+    {
+        $request->validate([
+            'user_id' => 'required|exists:users,id'
+        ]);
+
+        /** @var \App\Models\User $currentUser */
+        $currentUser = Auth::user();
+
+        // Security: Only the assigned agent or an admin can invite collaborators
+        if ($ticket->assigned_to !== $currentUser->id && !$currentUser->hasRole('admin')) {
+            abort(403, 'Only the assigned agent or an admin can invite collaborators.');
+        }
+
+        $invitedUser = \App\Models\User::findOrFail($request->user_id);
+
+        // Prevent inviting the assigned agent or someone already collaborating
+        if ($ticket->assigned_to === $invitedUser->id || $ticket->collaborators->contains($invitedUser->id)) {
+            return back()->withErrors(['error' => 'This user is already working on this ticket.']);
+        }
+
+        // Attach the user to the ticket via the pivot table
+        $ticket->collaborators()->attach($invitedUser->id);
+
+        // Global Audit Logging
+        \App\Models\AuditLog::create([
+            'user_id' => $currentUser->id,
+            'action' => 'Added Collaborator',
+            'target_type' => 'Ticket',
+            'target_id' => $ticket->id,
+            'new_value' => 'Added: ' . $invitedUser->name,
+        ]);
+
+        // Send the notification
+        $invitedUser->notify(new \App\Notifications\TicketCollaboratorNotification($ticket, $currentUser));
+
+        return back()->with('success', $invitedUser->name . ' has been invited to collaborate.');
+    }
+
+    public function downloadAttachment(Ticket $ticket, \App\Models\Attachment $attachment)
+    {
+        /** @var \App\Models\User $user */
+        $user = Auth::user();
+
+        // Security check: Only people involved with the ticket can download this file
+        $isCreator = $ticket->user_id === $user->id;
+        $isAssignee = $ticket->assigned_to === $user->id;
+        $isAdmin = $user->hasRole('admin') || $user->hasRole('super-admin');
+        $isCollaborator = $ticket->collaborators->contains($user->id);
+
+        if (!$isCreator && !$isAssignee && !$isAdmin && !$isCollaborator) {
+            abort(403, 'You do not have permission to view this attachment.');
+        }
+
+        // Ensure the requested file actually belongs to this specific ticket
+        if ($attachment->ticket_id !== $ticket->id) {
+            abort(404);
+        }
+
+        /** @var \Illuminate\Filesystem\FilesystemAdapter $localDisk */
+        $localDisk = \Illuminate\Support\Facades\Storage::disk('local');
+
+        /** @var \Illuminate\Filesystem\FilesystemAdapter $publicDisk */
+        $publicDisk = \Illuminate\Support\Facades\Storage::disk('public');
+
+        // Fetch the file securely from the private disk
+        if (!$localDisk->exists($attachment->file_path)) {
+
+            // Fallback just in case you are testing with your older 'public' files
+            if ($publicDisk->exists($attachment->file_path)) {
+                // Use ->response() instead of ->download() for inline preview
+                return $publicDisk->response($attachment->file_path);
+            }
+
+            abort(404, 'File not found on the server.');
+        }
+
+        // Use ->response() instead of ->download() for inline preview
+        return $localDisk->response($attachment->file_path);
     }
 }
